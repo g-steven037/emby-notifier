@@ -4646,7 +4646,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     if raw_program_type:
                         
                         parts.append("——————")
-                        parts.append(f"🎞️ 节目类型：{escape_markdown(raw_program_type)}")
+                        parts.append(f"📚 节目类型：{escape_markdown(raw_program_type)}")
                 premiere_date = item.get('PremiereDate')
                 if premiere_date:
         # 截取日期部分 YYYY-MM-DD
