@@ -4623,7 +4623,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 title_with_year_and_episode = f"{raw_title} ({media_details.get('year')})" if media_details.get('year') else raw_title
                 #title_with_year_and_episode += raw_episode_info
                 action_text = ""
-                item_type_cn = "📺 剧集入库：" if item.get('Type') in ['Episode', 'Series', 'Season'] else "🎬 电影入库：" if item.get('Type') == 'Movie' else ""
+                item_type_cn = "📺 剧集入库："if item.get('Type') in ['Episode', 'Series', 'Season'] else "🎬 电影入库："if item.get('Type') == 'Movie' else ""
 
                 if get_setting('settings.content_settings.new_library_notification.show_media_detail'):
                     if get_setting('settings.content_settings.new_library_notification.media_detail_has_tmdb_link') and media_details.get('tmdb_link'):
