@@ -4630,7 +4630,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         full_title_line = f"[{escape_markdown(title_with_year_and_episode)}]({media_details.get('tmdb_link')})"
                     else:
                         full_title_line = escape_markdown(title_with_year_and_episode)
-                    parts.append(f"{action_text}{item_type_cn} {full_title_line}")
+                    parts.append(f"{action_text}{item_type_cn}{full_title_line}")
                     if raw_episode_info:
                         parts.append(f"📥 本次新增：{escape_markdown(raw_episode_info.strip())}")
                 else:
