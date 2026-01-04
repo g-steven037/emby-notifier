@@ -211,7 +211,7 @@ settings:
 sudo mkdir -p /opt/emby-notifier/config
 # 将上面的 config.yaml 放到 /opt/emby-notifier/config/config.yaml
 
-# 2) 运行容器（假设镜像为 xpisce/emby-notifier:latest）
+# 2) 运行容器（假设镜像为 steven03799/emby_notifier:latest）
 docker run -d \
   --name emby-notifier \
   -p 8080:8080 \
@@ -220,7 +220,7 @@ docker run -d \
  # -v /path/to/your/media:/media \
  # -v /path/to/your/cloud:/cloud \
   --restart unless-stopped \
-  xpisce/emby-notifier:latest
+  steven03799/emby_notifier
 ```
 
 ### 方式 B：`docker-compose`
@@ -228,7 +228,7 @@ docker run -d \
 version: "3.8"
 services:
   emby-notifier:
-    image: xpisce/emby-notifier:latest
+    image: steven03799/emby_notifier
     container_name: emby-notifier
     ports:
       - "8080:8080"           # Emby Webhook 将 POST 到这个端口
