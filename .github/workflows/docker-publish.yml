@@ -1,8 +1,8 @@
 name: Build and Push Docker Image
 
+# 修改这里：改为手动触发
 on:
-  push:
-    branches: [ "main" ] # 当 main 分支有代码提交时触发
+  workflow_dispatch: # 这行代码开启了手动触发按钮
 
 jobs:
   build:
@@ -21,5 +21,5 @@ jobs:
         uses: docker/build-push-action@v4
         with:
           push: true
-          # 注意：这里修改为 你的用户名/仓库名
+          # 记得确保这里的用户名和仓库名正确
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/emby_notifier:latest
