@@ -5,9 +5,9 @@
 
 ### ⚙️ 使用说明
 
-📄 详细使用说明参见：  👉 [User-Guide.md](https://github.com/xpisce/emby-notifier/blob/main/User%20Guide/User-Guide.md)
+📄 详细使用说明参见：  👉 [User-Guide.md](https://github.com/g-steven037/emby-notifier/blob/main/User%20Guide/User-Guide.md)
 
-📄 完整配置文件参见：  👉 [config/config.yaml](https://github.com/xpisce/emby-notifier/blob/main/config/config.yaml)
+📄 完整配置文件参见：  👉 [config/config.yaml](https://github.com/g-steven037/emby-notifier/blob/main/config/config.yaml)
 
 ---
 
