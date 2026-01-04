@@ -630,14 +630,28 @@ def format_ticks_to_hms(ticks):
     return f"{int(h):02d}:{int(m):02d}:{int(s):02d}"
 
 def get_program_type_from_path(path):
-    """从文件路径中提取节目类型（例如：电影、剧集）。"""
-    if not MEDIA_BASE_PATH or not path or not path.startswith(MEDIA_BASE_PATH):
-        return None
-    relative_path = path[len(MEDIA_BASE_PATH):].lstrip('/')
-    parts = relative_path.split('/')
-    if parts and parts[0]:
-        return parts[0]
-    return None
+    """根据文件路径识别具体的节目分类"""
+    if not path: return None
+    path = path.replace('\\', '/')
+    
+    # 分类映射表
+    mapping = {
+        '国产剧': '国产剧', '国漫': '国漫', '日韩剧': '日韩剧',
+        '外语': '外语', 
+        '动漫': '动漫', '动画': '动画', '欧美剧': '欧美剧', '综艺': '综艺'
+    }
+    
+    region = ""
+    for key, val in mapping.items():
+        if key in path:
+            region = val
+            break
+            
+    if 'Movie' in path or '电影' in path:
+        return f"{region}电影" if region else "电影"
+    if any(k in path for k in ['TV', '剧集', 'Series','剧','动漫']):
+        return f"{region}" if region else "剧集"
+    return "其它项目"
 
 def extract_year_from_path(path):
     """从文件路径中提取年份。"""
@@ -1416,7 +1430,7 @@ def get_media_details(item, user_id):
         if tmdb_id:
             season_num, episode_num = item.get('ParentIndexNumber'), item.get('IndexNumber')
             if season_num is not None and episode_num is not None:
-                details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}/season/{season_num}/episode/{episode_num}"
+                details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}"
             else:
                 details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}"
     if tmdb_id:
@@ -1432,9 +1446,10 @@ def get_media_details(item, user_id):
         proxies = {'http': HTTP_PROXY, 'https': HTTP_PROXY} if HTTP_PROXY else None
         response = make_request_with_retry('GET', url, timeout=10, proxies=proxies)
         if response:
-            poster_path = response.json().get('poster_path')
-            if poster_path:
-                details['poster_url'] = f"https://image.tmdb.org/t/p/w500{poster_path}"
+            data = response.json()
+            image_path = response.json().get('backdrop_path') or data.get('poster_path')
+            if image_path:
+                details['poster_url'] = f"https://image.tmdb.org/t/p/w780{image_path}"
                 POSTER_CACHE[tmdb_id] = {'url': details['poster_url'], 'timestamp': datetime.now().isoformat()}
                 save_poster_cache()
                 print(f"✅ 成功从 TMDB 获取并缓存海报。")
@@ -2222,7 +2237,7 @@ def build_seasonwise_progress_and_missing_lines(series_tmdb_id, series_id, lates
                 status = "已完结" if tmdb_info.get('is_finale_marked') else "已完结（可能不准确）"
             else:
                 status = f"剩余{remaining}集"
-            lines.append(escape_markdown(f"更新进度：{status}"))
+            lines.append(escape_markdown(f"🌟 更新进度：{status}"))
 
             if local_max > 0:
                 expected = {n for n in tmdb_set if int(n) <= local_max}
@@ -2230,13 +2245,13 @@ def build_seasonwise_progress_and_missing_lines(series_tmdb_id, series_id, lates
                 if missing:
                     head = ", ".join([f"E{int(n):02d}" for n in missing[:10]])
                     suffix = f"…(共{len(missing)}集)" if len(missing) > 10 else ""
-                    lines.append(escape_markdown(f"缺集：S{int(s):02d} {head}{suffix}"))
+                    lines.append(escape_markdown(f"⚠️ 缺集：S{int(s):02d} {head}{suffix}"))
         else:
             missing = sorted(tmdb_set - local_set)
             if missing:
                 head = ", ".join([f"E{int(n):02d}" for n in missing[:10]])
                 suffix = f"…(共{len(missing)}集)" if len(missing) > 10 else ""
-                lines.append(escape_markdown(f"缺集：S{int(s):02d} {head}{suffix}"))
+                lines.append(escape_markdown(f"⚠️ 缺集：S{int(s):02d} {head}{suffix}"))
 
     return lines
 
@@ -2351,7 +2366,7 @@ def format_stream_details_message(stream_details, is_season_info=False, prefix='
         parts = [p for p in parts if p]
         if parts:
             video_line = ' '.join(parts)
-            label = "视频规格：" if prefix == 'new_library_notification' or prefix == 'playback_action' else "视频："
+            label = "📼 视频规格：" if prefix == 'new_library_notification' or prefix == 'playback_action' else "视频："
             indent = "    " if is_season_info else ""
             message_parts.append(f"{indent}{label}{video_line}")
 
@@ -4112,8 +4127,8 @@ def handle_telegram_command(message):
                     safe_edit_or_send_message(chat_id, original_message_id, escape_markdown(error_text), buttons=buttons, delete_after=120)
                     return
                 
-                poster_path = tmdb_details.get('poster_path')
-                poster_url = f"https://image.tmdb.org/t/p/w500{poster_path}" if poster_path else None
+                image_path = tmdb_details.get('backdrop_path') or tmdb_details.get('poster_path')
+                poster_url = f"https://image.tmdb.org/t/p/w780{image_path}" if image_path else None
                 title = tmdb_details.get('title') or tmdb_details.get('name')
                 overview = tmdb_details.get('overview', '暂无剧情简介。')
                 tmdb_url_type = "movie" if 'title' in tmdb_details else "tv"
@@ -4606,9 +4621,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     raw_title = item.get('Name', '未知标题')
 
                 title_with_year_and_episode = f"{raw_title} ({media_details.get('year')})" if media_details.get('year') else raw_title
-                title_with_year_and_episode += raw_episode_info
-                action_text = "✅ 新增"
-                item_type_cn = "剧集" if item.get('Type') in ['Episode', 'Series', 'Season'] else "电影" if item.get('Type') == 'Movie' else ""
+                #title_with_year_and_episode += raw_episode_info
+                action_text = ""
+                item_type_cn = "📺 剧集入库：" if item.get('Type') in ['Episode', 'Series', 'Season'] else "🎬 电影入库：" if item.get('Type') == 'Movie' else ""
 
                 if get_setting('settings.content_settings.new_library_notification.show_media_detail'):
                     if get_setting('settings.content_settings.new_library_notification.media_detail_has_tmdb_link') and media_details.get('tmdb_link'):
@@ -4616,25 +4631,61 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     else:
                         full_title_line = escape_markdown(title_with_year_and_episode)
                     parts.append(f"{action_text}{item_type_cn} {full_title_line}")
+                    if raw_episode_info:
+                        parts.append(f"📥 本次新增：{escape_markdown(raw_episode_info.strip())}")
                 else:
                     parts.append(f"{action_text}{item_type_cn}")
 
                 if added_summary:
                     count_match = re.search(r'(\d+)\s*项目', (event_data.get('Title') or ''))
-                    count_str = f"（共 {count_match.group(1)} 集）" if count_match else ""
-                    parts.append(f"本次新增：{escape_markdown(added_summary)}{escape_markdown(count_str)}")
+                    count_str = f"" if count_match else ""
+                    parts.append(f"📥 本次新增：{escape_markdown(added_summary)}{escape_markdown(count_str)}")
 
                 if get_setting('settings.content_settings.new_library_notification.show_media_type'):
                     raw_program_type = get_program_type_from_path(item.get('Path'))
                     if raw_program_type:
-                        parts.append(f"节目类型：{escape_markdown(raw_program_type)}")
+                        
+                        parts.append("——————")
+                        parts.append(f"🏷️ 节目类型：{escape_markdown(raw_program_type)}")
+                premiere_date = item.get('PremiereDate')
+                if premiere_date:
+        # 截取日期部分 YYYY-MM-DD
+                    date_str = premiere_date.split('T')[0]
+                    parts.append(f"📅 上映时间：`{escape_markdown(date_str)}`")
 
+                genres = item.get('Genres', [])
+                if genres:
+
+                    tag_str = " ".join([f"{escape_markdown(g)}" for g in genres])
+                    parts.append(f"🎭 剧情标签：{tag_str}")
+
+                people = item.get('People', [])
+                actors = [p.get('Name') for p in people if p.get('Type') == 'Actor']
+                if actors:
+                    actor_str = ", ".join(actors[:2])
+                    parts.append(f"👥 主演阵容：{escape_markdown(actor_str)}")
+
+                
+                if get_setting('settings.content_settings.new_library_notification.show_timestamp'):
+                    parts.append(f"⏰ 入库时间：{escape_markdown(datetime.now(TIMEZONE).strftime('%Y-%m-%d'))}")
+
+                rating = item.get('CommunityRating')
+                if rating:
+                    stars = "🌕" * int(rating // 2) + "🌑" * (5 - int(rating // 2))
+                    parts.append(f"⭐ 媒体评分：{stars} `{rating:.1f}`")
+
+                #stream_details = get_media_stream_details(item.get('Id'))
+
+            
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
                     overview_text = item.get('Overview', '暂无剧情简介')
                     if overview_text:
+                        
                         overview_text = overview_text[:150] + "..." if len(overview_text) > 150 else overview_text
-                        parts.append(f"剧情：{escape_markdown(overview_text)}")
-
+                        parts.append("")
+                        parts.append(f"📝 剧情介绍：{escape_markdown(overview_text)}")
+                        parts.append("")
+                
                 if stream_details:
                     formatted_specs = format_stream_details_message(stream_details, prefix='new_library_notification')
                     for part in formatted_specs:
@@ -4645,8 +4696,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     if progress_lines:
                         parts.extend(progress_lines)
 
-                if get_setting('settings.content_settings.new_library_notification.show_timestamp'):
-                    parts.append(f"入库时间：{escape_markdown(datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S'))}")
 
                 message = "\n".join(parts)
                 photo_url = None
@@ -4669,14 +4718,14 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     if auto_delete_group:
                         send_deletable_telegram_notification(message, photo_url, chat_id=GROUP_ID, inline_buttons=buttons if buttons else None, delay_seconds=60)
                     else:
-                        send_telegram_notification(message, photo_url, chat_id=GROUP_ID, inline_buttons=buttons if buttons else None)
+                        send_telegram_notification(message, photo_url, chat_id=GROUP_ID, inline_buttons=None)
 
                 if get_setting('settings.notification_management.library_new.to_channel') and CHANNEL_ID:
                     print(f"✉️ 向频道 {CHANNEL_ID} 发送新增通知。")
                     if auto_delete_channel:
                         send_deletable_telegram_notification(message, photo_url, chat_id=CHANNEL_ID, inline_buttons=buttons if buttons else None, delay_seconds=60)
                     else:
-                        send_telegram_notification(message, photo_url, chat_id=CHANNEL_ID, inline_buttons=buttons if buttons else None)
+                        send_telegram_notification(message, photo_url, chat_id=CHANNEL_ID, inline_buttons=None)
 
                 if get_setting('settings.notification_management.library_new.to_private') and ADMIN_USER_ID:
                     print(f"✉️ 向管理员 {ADMIN_USER_ID} 发送新增通知。")
