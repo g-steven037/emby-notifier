@@ -4691,12 +4691,12 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
-                    overview_text = item.get('Overview', '暂无剧情简介')
+                    overview_text = item.get('Overview', '暂无剧情介绍')
                     if overview_text:
                         
                         overview_text = overview_text[:150] + "..." if len(overview_text) > 150 else overview_text
                         parts.append("")
-                        parts.append(f"📝 剧情介绍：{escape_markdown(overview_text)}")
+                        parts.append(f"📝 剧情介绍：{details['overview']}"")
                         parts.append("")
                 
                 if stream_details:
