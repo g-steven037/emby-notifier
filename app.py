@@ -4671,10 +4671,17 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
                 rating = item.get('CommunityRating')
                 if rating:
-                    stars = "🌕" * int(rating // 2) + "🌑" * (5 - int(rating // 2))
-                    parts.append(f"⭐ 媒体评分：{stars} `{rating:.1f}`")
+                    #stars = "🌕" * int(rating // 2) + "🌑" * (5 - int(rating // 2))
+                    #parts.append(f"⭐ 媒体评分：{stars} `{rating:.1f}`")
+                    formatted_rating = f"{float(rating):.1f}/10.0"
+                    parts.append(f"⭐ 媒体评分：`{formatted_rating}`")
 
-                #stream_details = get_media_stream_details(item.get('Id'))
+                if tmdb_id:
+                    # 根据项目类型生成 TMDB 链接 (tv 或 movie)
+                    tmdb_type = "tv" if item.get('Type') != 'Movie' else "movie"
+                    tmdb_url = f"https://www.themoviedb.org/{tmdb_type}/{tmdb_id}"
+                    # 格式化输出：TMDB ID: [256226](链接)
+                    parts.append(f"🍿 TMDB ID：[{tmdb_id}]({tmdb_url})")
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
