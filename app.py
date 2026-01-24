@@ -4684,9 +4684,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     parts.append(f"⏰ 入库时间：{escape_markdown(datetime.now(TIMEZONE).strftime('%Y-%m-%d'))}")
 
                 details = get_media_details(item, EMBY_USER_ID)
-                parts.append(f"🆔 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
+                parts.append(f"⭐ 媒体评分：`{details['rating']}`")
+                parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
                 if details['studio']:
-                    parts.append(f"🏢 制作商：`{details['studio']}`")
+                    parts.append(f"🏢 播出平台：`{details['studio']}`")
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
