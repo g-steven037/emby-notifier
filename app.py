@@ -4675,7 +4675,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     #parts.append(f"⭐ 媒体评分：{stars} `{rating:.1f}`")
                     formatted_rating = f"{float(rating):.1f}/10.0"
                     parts.append(f"⭐ 媒体评分：`{formatted_rating}`")
-
+                tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
                 if tmdb_id:
                     # 根据项目类型生成 TMDB 链接 (tv 或 movie)
                     tmdb_type = "tv" if item.get('Type') != 'Movie' else "movie"
