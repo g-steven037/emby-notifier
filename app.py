@@ -4685,9 +4685,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
 
                 details = get_media_details(item, EMBY_USER_ID)
                 parts.append(f"⭐ 媒体评分：`{details['rating']}`")
-                parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
                 if details['studio']:
                     parts.append(f"🏢 播出平台：`{details['studio']}`")
+                parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
