@@ -1387,93 +1387,86 @@ def search_tmdb_by_title(title, year=None, media_type='tv'):
 
 def get_media_details(item, user_id):
     """
-    获取媒体的详细信息，包括海报和TMDB链接。
-    :param item: Emby项目字典
-    :param user_id: Emby用户ID
-    :return: 包含海报URL、TMDB链接、年份和TMDB ID的字典
+    获取媒体的详细信息，包括16:9海报、TMDB链接、格式化评分、制作商及全剧剧情。
     """
-    # --- 新增：如果是单集，获取其父级剧集的 ID ---
+    # 1. 初始化详情字典，增加 studio, rating, overview 字段
+    details = {
+        'poster_url': None, 
+        'tmdb_link': None, 
+        'year': None, 
+        'tmdb_id': None,
+        'rating': '暂无评分',
+        'studio': None,
+        'overview': '暂无剧情简介'
+    }
+    
+    if not TMDB_API_TOKEN:
+        print("⚠️ 未配置 TMDB_API_TOKEN，跳过获取节目详情。")
+        return details
+
+    item_type = item.get('Type')
+    details['year'] = item.get('ProductionYear') or extract_year_from_path(item.get('Path'))
+    
+    # --- 核心增强：如果是单集，自动抓取其父级剧集(Series)的完整信息 ---
     actual_item = item
     if item_type == 'Episode':
         series_id = item.get('SeriesId')
         if series_id:
-            # 这里的 EMBY_SERVER_URL 和 EMBY_API_KEY 使用你脚本中的全局变量
-            series_url = f"{EMBY_SERVER_URL}/Users/{user_id}/Items/{series_id}?api_key={EMBY_API_KEY}"
-            s_res = make_request_with_retry('GET', series_url)
-            if s_res:
-                actual_item = s_res.json() # 将 actual_item 替换为整部剧的对象
-    details = {'poster_url': None, 'tmdb_link': None, 'year': None, 'tmdb_id': None}
-    if not TMDB_API_TOKEN:
-        print("⚠️ 未配置 TMDB_API_TOKEN，跳过获取节目详情。")
-        return details
-    item_type = item.get('Type')
-    tmdb_id, api_type = None, None
-    details['year'] = item.get('ProductionYear') or extract_year_from_path(item.get('Path'))
-    print(f"ℹ️ 正在获取项目 {item.get('Name')} ({item.get('Id')}) 的媒体详情。类型: {item_type}")
-
-    if item_type == 'Movie':
-        api_type = 'movie'
-        tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
-        if tmdb_id:
-            details['tmdb_link'] = f"https://www.themoviedb.org/movie/{tmdb_id}"
-    elif item_type == 'Series':
-        api_type = 'tv'
-        tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
-        if tmdb_id:
-            details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}"
-    elif item_type == 'Episode':
-        api_type = 'tv'
-        series_provider_ids = item.get('SeriesProviderIds', {}) or item.get('Series', {}).get('ProviderIds', {})
-        tmdb_id = series_provider_ids.get('Tmdb')
-        if not tmdb_id and item.get('SeriesId'):
-            print(f"⚠️ 无法从 Episode 获取 TMDB ID，尝试从 SeriesId ({item.get('SeriesId')}) 获取。")
-            series_id = item.get('SeriesId')
             request_user_id = user_id or EMBY_USER_ID
-            url_part = f"/Users/{request_user_id}/Items/{series_id}" if request_user_id else f"/Items/{series_id}"
-            url = f"{EMBY_SERVER_URL}{url_part}"
-            response = make_request_with_retry('GET', url, params={'api_key': EMBY_API_KEY}, timeout=10)
+            series_url = f"{EMBY_SERVER_URL}/Users/{request_user_id}/Items/{series_id}"
+            response = make_request_with_retry('GET', series_url, params={'api_key': EMBY_API_KEY}, timeout=10)
             if response:
-                tmdb_id = response.json().get('ProviderIds', {}).get('Tmdb')
-        if not tmdb_id:
-            print(f"⚠️ 仍然没有 TMDB ID，尝试通过标题搜索 TMDB。")
-            tmdb_id = search_tmdb_by_title(item.get('SeriesName'), details.get('year'), media_type='tv')
-        if tmdb_id:
-            season_num, episode_num = item.get('ParentIndexNumber'), item.get('IndexNumber')
-            if season_num is not None and episode_num is not None:
-                details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}"
-            else:
-                details['tmdb_link'] = f"https://www.themoviedb.org/tv/{tmdb_id}"
+                actual_item = response.json()
+                print(f"ℹ️ 已从 SeriesId ({series_id}) 追溯获取整部剧的元数据。")
+
+    # --- 提取评分 (格式化为 X.X/10.0) ---
+    raw_rating = actual_item.get('CommunityRating')
+    if raw_rating:
+        details['rating'] = f"{float(raw_rating):.1f}/10.0"
+
+    # --- 提取制作商 (Studio) ---
+    studios = actual_item.get('Studios', [])
+    if studios:
+        details['studio'] = studios[0].get('Name')
+
+    # --- 提取 TMDB ID 和构建链接 ---
+    tmdb_id = actual_item.get('ProviderIds', {}).get('Tmdb')
+    api_type = 'movie' if item_type == 'Movie' else 'tv'
+    
     if tmdb_id:
         details['tmdb_id'] = tmdb_id
+        details['tmdb_link'] = f"https://www.themoviedb.org/{api_type}/{tmdb_id}"
+
+        # 检查缓存逻辑
         if tmdb_id in POSTER_CACHE:
             cached_item = POSTER_CACHE[tmdb_id]
             cached_time = datetime.fromisoformat(cached_item['timestamp'])
             if datetime.now() - cached_time < timedelta(days=POSTER_CACHE_TTL_DAYS):
+                # 如果缓存存在，我们仍需从 TMDB 获取剧情（因为旧缓存可能没存剧情）
+                # 这里为了性能，建议如果你之前没存剧情，这次先清理一次缓存
                 details['poster_url'] = cached_item['url']
-                print(f"✅ 从缓存获取到 TMDB ID {tmdb_id} 的海报链接。")
-                return details
+        
+        # --- 请求 TMDB API 获取 16:9 海报和全剧剧情 ---
         url = f"https://api.themoviedb.org/3/{api_type}/{tmdb_id}?api_key={TMDB_API_TOKEN}&language=zh-CN"
         proxies = {'http': HTTP_PROXY, 'https': HTTP_PROXY} if HTTP_PROXY else None
-        response = make_request_with_retry('GET', url, timeout=10, proxies=proxies)
-        if response:
-            data = response.json()
-            image_path = response.json().get('backdrop_path') or data.get('poster_path')
+        tmdb_res = make_request_with_retry('GET', url, timeout=10, proxies=proxies)
+        
+        if tmdb_res:
+            data = tmdb_res.json()
+            # 1. 获取 16:9 横版剧照 (backdrop)
+            image_path = data.get('backdrop_path') or data.get('poster_path')
             if image_path:
                 details['poster_url'] = f"https://image.tmdb.org/t/p/w780{image_path}"
+                # 更新缓存
                 POSTER_CACHE[tmdb_id] = {'url': details['poster_url'], 'timestamp': datetime.now().isoformat()}
                 save_poster_cache()
-                print(f"✅ 成功从 TMDB 获取并缓存海报。")
-    # 1. 获取 TMDB ID (从 actual_item 获取)
-    tmdb_id = actual_item.get('ProviderIds', {}).get('Tmdb')
-    details['tmdb_id'] = tmdb_id
 
-    # 2. 获取制作商 (从 actual_item 获取)
-    studios = actual_item.get('Studios', [])
-    details['studio'] = studios[0].get('Name') if studios else ""
+            # 2. 获取全剧剧情并清洗 (去掉回车缩进)
+            raw_overview = data.get('overview', '')
+            if raw_overview:
+                clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
+                details['overview'] = clean_ov[:150] + "..." if len(clean_ov) > 150 else clean_ov
 
-    # 3. 获取评分 (格式化为 4.6/10.0)
-    rating = actual_item.get('CommunityRating')
-    details['rating'] = f"{float(rating):.1f}/10.0" if rating else "暂无评分"
     return details
 
 def safe_edit_or_send_message(chat_id, message_id, text, buttons=None, disable_preview=True, delete_after=None):
@@ -4690,16 +4683,10 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 if get_setting('settings.content_settings.new_library_notification.show_timestamp'):
                     parts.append(f"⏰ 入库时间：{escape_markdown(datetime.now(TIMEZONE).strftime('%Y-%m-%d'))}")
 
-                tmdb_id = details.get('tmdb_id')
-                if tmdb_id:
-                    tmdb_type = "movie" if item.get('Type') == 'Movie' else "tv"
-                    tmdb_link = f"https://www.themoviedb.org/{tmdb_type}/{tmdb_id}"
-                    message_parts.append(f"🆔 TMDB ID：[{tmdb_id}]({tmdb_link})")
-                    
-                # 4. 新增：制作商 (iQiyi)
-                studio = details.get('studio')
-                if studio:
-                    message_parts.append(f"🏢 制作商：`{escape_markdown(studio)}`")
+                details = get_media_details(item, EMBY_USER_ID)
+                parts.append(f"🆔 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
+                if details['studio']:
+                    parts.append(f"🏢 制作商：`{details['studio']}`")
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
