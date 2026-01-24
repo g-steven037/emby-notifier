@@ -1392,6 +1392,16 @@ def get_media_details(item, user_id):
     :param user_id: Emby用户ID
     :return: 包含海报URL、TMDB链接、年份和TMDB ID的字典
     """
+    # --- 新增：如果是单集，获取其父级剧集的 ID ---
+    actual_item = item
+    if item_type == 'Episode':
+        series_id = item.get('SeriesId')
+        if series_id:
+            # 这里的 EMBY_SERVER_URL 和 EMBY_API_KEY 使用你脚本中的全局变量
+            series_url = f"{EMBY_SERVER_URL}/Users/{user_id}/Items/{series_id}?api_key={EMBY_API_KEY}"
+            s_res = make_request_with_retry('GET', series_url)
+            if s_res:
+                actual_item = s_res.json() # 将 actual_item 替换为整部剧的对象
     details = {'poster_url': None, 'tmdb_link': None, 'year': None, 'tmdb_id': None}
     if not TMDB_API_TOKEN:
         print("⚠️ 未配置 TMDB_API_TOKEN，跳过获取节目详情。")
@@ -1453,6 +1463,17 @@ def get_media_details(item, user_id):
                 POSTER_CACHE[tmdb_id] = {'url': details['poster_url'], 'timestamp': datetime.now().isoformat()}
                 save_poster_cache()
                 print(f"✅ 成功从 TMDB 获取并缓存海报。")
+    # 1. 获取 TMDB ID (从 actual_item 获取)
+    tmdb_id = actual_item.get('ProviderIds', {}).get('Tmdb')
+    details['tmdb_id'] = tmdb_id
+
+    # 2. 获取制作商 (从 actual_item 获取)
+    studios = actual_item.get('Studios', [])
+    details['studio'] = studios[0].get('Name') if studios else ""
+
+    # 3. 获取评分 (格式化为 4.6/10.0)
+    rating = actual_item.get('CommunityRating')
+    details['rating'] = f"{float(rating):.1f}/10.0" if rating else "暂无评分"
     return details
 
 def safe_edit_or_send_message(chat_id, message_id, text, buttons=None, disable_preview=True, delete_after=None):
@@ -4669,19 +4690,16 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 if get_setting('settings.content_settings.new_library_notification.show_timestamp'):
                     parts.append(f"⏰ 入库时间：{escape_markdown(datetime.now(TIMEZONE).strftime('%Y-%m-%d'))}")
 
-                rating = item.get('CommunityRating')
-                if rating:
-                    #stars = "🌕" * int(rating // 2) + "🌑" * (5 - int(rating // 2))
-                    #parts.append(f"⭐ 媒体评分：{stars} `{rating:.1f}`")
-                    formatted_rating = f"{float(rating):.1f}/10.0"
-                    parts.append(f"⭐ 媒体评分：`{formatted_rating}`")
-                tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
+                tmdb_id = details.get('tmdb_id')
                 if tmdb_id:
-                    # 根据项目类型生成 TMDB 链接 (tv 或 movie)
-                    tmdb_type = "tv" if item.get('Type') != 'Movie' else "movie"
-                    tmdb_url = f"https://www.themoviedb.org/{tmdb_type}/{tmdb_id}"
-                    # 格式化输出：TMDB ID: [256226](链接)
-                    parts.append(f"🍿 TMDB ID：[{tmdb_id}]({tmdb_url})")
+                    tmdb_type = "movie" if item.get('Type') == 'Movie' else "tv"
+                    tmdb_link = f"https://www.themoviedb.org/{tmdb_type}/{tmdb_id}"
+                    message_parts.append(f"🆔 TMDB ID：[{tmdb_id}]({tmdb_link})")
+                    
+                # 4. 新增：制作商 (iQiyi)
+                studio = details.get('studio')
+                if studio:
+                    message_parts.append(f"🏢 制作商：`{escape_markdown(studio)}`")
 
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
