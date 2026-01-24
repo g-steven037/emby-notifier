@@ -4696,7 +4696,9 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         
                         overview_text = overview_text[:150] + "..." if len(overview_text) > 150 else overview_text
                         parts.append("")
-                        parts.append(f"📝 剧情介绍：{details['overview']}")
+                        full_overview = details.get('overview', '暂无剧情介绍') 
+                        parts.append(f"📝 剧情介绍：{escape_markdown(full_overview)}")
+                        #parts.append(f"📝 剧情介绍：{details['overview']}")
                         parts.append("")
                 
                 if stream_details:
