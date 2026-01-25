@@ -801,7 +801,7 @@ def refresh_emby_item(item_id, item_name):
     params = {
         'api_key': EMBY_API_KEY,
         'Recursive': 'true',
-        'MetadataRefreshMode': 'FullRefresh',
+        'MetadataRefreshMode': 'FullRefresh'，
         'ReplaceAllMetadata': 'true'
     }
     
@@ -1465,7 +1465,7 @@ def get_media_details(item, user_id):
             raw_overview = data.get('overview', '')
             if raw_overview:
                 clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
-                details['overview'] = clean_ov[:150] + "..." if len(clean_ov) > 150 else clean_ov
+                details['overview'] = clean_ov[:100] + "..." if len(clean_ov) > 100 else clean_ov
 
     return details
 
