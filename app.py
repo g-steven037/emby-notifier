@@ -474,7 +474,7 @@ def parse_episode_ranges_from_description(description: str):
     输出: ("S01E01, S01E03–E04", ["S01E01","S01E03","S01E04"])
     """
     if not description:
-        return None, []
+        return 无， []
     first_line = description.strip().splitlines()[0]
     if not first_line:
         return None, []
@@ -801,7 +801,7 @@ def refresh_emby_item(item_id, item_name):
     params = {
         'api_key': EMBY_API_KEY,
         'Recursive': 'true',
-        'MetadataRefreshMode': 'FullRefresh'，
+        'MetadataRefreshMode': 'FullRefresh',
         'ReplaceAllMetadata': 'true'
     }
     
@@ -1465,7 +1465,7 @@ def get_media_details(item, user_id):
             raw_overview = data.get('overview', '')
             if raw_overview:
                 clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
-                details['overview'] = clean_ov[:150] + "..." if len(clean_ov) > 150 else clean_ov
+                details['overview'] = clean_ov[:100] + "..." if len(clean_ov) > 100 else clean_ov
 
     return details
 
@@ -1749,7 +1749,7 @@ def get_active_sessions_info(user_id):
             program_full_title_raw = f"{raw_title}{year_str}{raw_episode_info}"
             
             session_lines = [
-                f"\n",
+                f"\n"，
                 f"👤 *用户*: {escape_markdown(raw_user_name)}",
                 f"*{escape_markdown('─' * 20)}*"
             ]
