@@ -1114,7 +1114,7 @@ def _get_geo_ipapi(ip):
                 city = ''
             
             geo_parts = [p for p in [region, city] if p]
-            location_part = ''.join(geo_parts)
+            location_part = ''。join(geo_parts)
             
             full_location = f"{location_part} {isp}".strip()
             return full_location if full_location else "未知位置"
@@ -1465,7 +1465,7 @@ def get_media_details(item, user_id):
             raw_overview = data.get('overview', '')
             if raw_overview:
                 clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
-                details['overview'] = clean_ov[:100] + "..." if len(clean_ov) > 100 else clean_ov
+                details['overview'] = clean_ov[:150] + "..." if len(clean_ov) > 150 else clean_ov
 
     return details
 
