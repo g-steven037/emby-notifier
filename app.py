@@ -474,7 +474,7 @@ def parse_episode_ranges_from_description(description: str):
     输出: ("S01E01, S01E03–E04", ["S01E01","S01E03","S01E04"])
     """
     if not description:
-        return 无， []
+        return None, []
     first_line = description.strip().splitlines()[0]
     if not first_line:
         return None, []
