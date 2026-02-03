@@ -1466,20 +1466,20 @@ def get_media_details(item, user_id):
             if raw_overview:
                 clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
                 details['overview'] = clean_ov[:100] + "..." if len(clean_ov) > 100 else clean_ov
+
             ext_url = f"https://api.themoviedb.org/3/{api_type}/{tmdb_id}/external_ids?api_key={TMDB_API_TOKEN}"
             ext_res = make_request_with_retry('GET', ext_url)
             if ext_res:
                 ext_data = ext_res.json()
-                # IMDB
                 imdb_id = ext_data.get('imdb_id')
                 if imdb_id:
-                    details['imdb_id'] = imdb_id
-                    details['imdb_link'] = f"https://www.imdb.com/title/{imdb_id}"
-                # 豆瓣 (TMDB 也会返回 douban_id)
-                douban_id = ext_data.get('douban_id')
-                if douban_id:
-                    details['douban_id'] = douban_id
-                    details['douban_link'] = f"https://movie.douban.com/subject/{douban_id}"
+                    # 方案 A：有 IMDB ID，使用精准匹配
+                    details['imdb_link'] = f"https://www.imdb.com/title/{imdb_id}/"
+                    details['douban_link'] = f"https://www.douban.com/search?cat=1002&q={imdb_id}"
+                else:
+                    # 方案 B：无 IMDB ID，使用 "名字 (年份)" 搜索
+                    search_query = f"{name} ({year})".strip()
+                    details['douban_link'] = f"https://www.douban.com/search?cat=1002&q={search_query}"
 
     return details
 
@@ -4704,22 +4704,21 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
 
                 links = []
-                # TMDB
+                # 1. TMDB
                 if details['tmdb_link']:
                     links.append(f"🔗 [TMDB]({details['tmdb_link']})")
-                # 豆瓣
+                
+                # 2. 豆瓣 (无论有无 IMDB 都会有 douban_link)
                 if details['douban_link']:
                     links.append(f"✳️ [豆瓣]({details['douban_link']})")
-                else:
-                    # 如果 TMDB 没返回豆瓣ID，尝试搜索链接（可选）
-                    search_name = item.get('Name', '')
-                    links.append(f"✳️ [豆瓣](https://www.douban.com/search?q={search_name})")
-                # IMDB
+                
+                # 3. IMDB (仅在有 ID 时显示)
                 if details['imdb_link']:
                     links.append(f"🌟 [IMDB]({details['imdb_link']})")
-
-                # 用竖线分隔
-                parts.append(" | ".join(links))
+                
+                # 合并显示：🔗 TMDB | ✳️ 豆瓣 | 🌟 IMDB
+                if links:
+                    parts.append(" | ".join(links))
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
                     overview_text = item.get('Overview', '暂无剧情介绍')
