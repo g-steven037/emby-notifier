@@ -4718,7 +4718,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 
                 # 合并显示：🔗 TMDB | ✳️ 豆瓣 | 🌟 IMDB
                 if links:
-                    parts.append(" | ".join(links))
+                    parts.append(" \\| ".join(links))
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
                     overview_text = item.get('Overview', '暂无剧情介绍')
