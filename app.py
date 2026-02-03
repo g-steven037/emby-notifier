@@ -4701,7 +4701,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 parts.append(f"⭐ 媒体评分：`{details['rating']}`")
                 if details['studio']:
                     parts.append(f"🏢 播出平台：`{details['studio']}`")
-                parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
+                #parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
 
 
                 if get_setting('settings.content_settings.new_library_notification.show_progress_status'):
