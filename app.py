@@ -2265,7 +2265,7 @@ def build_seasonwise_progress_and_missing_lines(series_tmdb_id, series_id, lates
                 status = "已完结" if tmdb_info.get('is_finale_marked') else "已完结（可能不准确）"
             else:
                 status = f"剩余{remaining}集"
-            lines.append(escape_markdown(f"🌟 更新进度：{status}"))
+            lines.append(escape_markdown(f"📊 更新进度：{status}"))
 
             if local_max > 0:
                 expected = {n for n in tmdb_set if int(n) <= local_max}
@@ -2273,13 +2273,13 @@ def build_seasonwise_progress_and_missing_lines(series_tmdb_id, series_id, lates
                 if missing:
                     head = ", ".join([f"E{int(n):02d}" for n in missing[:10]])
                     suffix = f"…(共{len(missing)}集)" if len(missing) > 10 else ""
-                    lines.append(escape_markdown(f"⚠️ 缺集：S{int(s):02d} {head}{suffix}"))
+                    lines.append(escape_markdown(f"⚠️ 当前缺集：S{int(s):02d} {head}{suffix}"))
         else:
             missing = sorted(tmdb_set - local_set)
             if missing:
                 head = ", ".join([f"E{int(n):02d}" for n in missing[:10]])
                 suffix = f"…(共{len(missing)}集)" if len(missing) > 10 else ""
-                lines.append(escape_markdown(f"⚠️ 缺集：S{int(s):02d} {head}{suffix}"))
+                lines.append(escape_markdown(f"⚠️ 当前缺集：S{int(s):02d} {head}{suffix}"))
 
     return lines
 
@@ -4703,6 +4703,28 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     parts.append(f"🏢 播出平台：`{details['studio']}`")
                 parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
 
+
+                if get_setting('settings.content_settings.new_library_notification.show_progress_status'):
+                    progress_lines = build_progress_lines_for_library_new(item, media_details)
+                    if progress_lines:
+                        parts.extend(progress_lines)
+                
+                if get_setting('settings.content_settings.new_library_notification.show_overview'):
+                    overview_text = item.get('Overview', '暂无剧情介绍')
+                    if overview_text:
+                        
+                        overview_text = overview_text[:150] + "..." if len(overview_text) > 150 else overview_text
+                        parts.append("")
+                        full_overview = details.get('overview', '暂无剧情介绍') 
+                        parts.append(f"📝 剧情介绍：{escape_markdown(full_overview)}")
+                        #parts.append(f"📝 剧情介绍：{details['overview']}")
+                        parts.append("\n")
+                
+                if stream_details:
+                    formatted_specs = format_stream_details_message(stream_details, prefix='new_library_notification')
+                    for part in formatted_specs:
+                        parts.append(escape_markdown(part))
+
                 links = []
                 # 1. TMDB
                 if details['tmdb_link']:
@@ -4719,27 +4741,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
                 # 合并显示：🔗 TMDB | ✳️ 豆瓣 | 🌟 IMDB
                 if links:
                     parts.append(" \\| ".join(links))
-            
-                if get_setting('settings.content_settings.new_library_notification.show_overview'):
-                    overview_text = item.get('Overview', '暂无剧情介绍')
-                    if overview_text:
-                        
-                        overview_text = overview_text[:150] + "..." if len(overview_text) > 150 else overview_text
-                        parts.append("")
-                        full_overview = details.get('overview', '暂无剧情介绍') 
-                        parts.append(f"📝 剧情介绍：{escape_markdown(full_overview)}")
-                        #parts.append(f"📝 剧情介绍：{details['overview']}")
-                        parts.append("")
-                
-                if stream_details:
-                    formatted_specs = format_stream_details_message(stream_details, prefix='new_library_notification')
-                    for part in formatted_specs:
-                        parts.append(escape_markdown(part))
-
-                if get_setting('settings.content_settings.new_library_notification.show_progress_status'):
-                    progress_lines = build_progress_lines_for_library_new(item, media_details)
-                    if progress_lines:
-                        parts.extend(progress_lines)
 
 
                 message = "\n".join(parts)
