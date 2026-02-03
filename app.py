@@ -1466,6 +1466,20 @@ def get_media_details(item, user_id):
             if raw_overview:
                 clean_ov = raw_overview.strip().replace('\u3000', '').replace('\r\n', ' ').replace('\n', ' ')
                 details['overview'] = clean_ov[:100] + "..." if len(clean_ov) > 100 else clean_ov
+            ext_url = f"https://api.themoviedb.org/3/{api_type}/{tmdb_id}/external_ids?api_key={TMDB_API_TOKEN}"
+            ext_res = make_request_with_retry('GET', ext_url)
+            if ext_res:
+                ext_data = ext_res.json()
+                # IMDB
+                imdb_id = ext_data.get('imdb_id')
+                if imdb_id:
+                    details['imdb_id'] = imdb_id
+                    details['imdb_link'] = f"https://www.imdb.com/title/{imdb_id}"
+                # 豆瓣 (TMDB 也会返回 douban_id)
+                douban_id = ext_data.get('douban_id')
+                if douban_id:
+                    details['douban_id'] = douban_id
+                    details['douban_link'] = f"https://movie.douban.com/subject/{douban_id}"
 
     return details
 
@@ -4689,6 +4703,23 @@ class WebhookHandler(BaseHTTPRequestHandler):
                     parts.append(f"🏢 播出平台：`{details['studio']}`")
                 parts.append(f"🍿 TMDB ID：[{details['tmdb_id']}]({details['tmdb_link']})")
 
+                links = []
+                # TMDB
+                if details['tmdb_link']:
+                    links.append(f"🔗 [TMDB]({details['tmdb_link']})")
+                # 豆瓣
+                if details['douban_link']:
+                    links.append(f"✳️ [豆瓣]({details['douban_link']})")
+                else:
+                    # 如果 TMDB 没返回豆瓣ID，尝试搜索链接（可选）
+                    search_name = item.get('Name', '')
+                    links.append(f"✳️ [豆瓣](https://www.douban.com/search?q={search_name})")
+                # IMDB
+                if details['imdb_link']:
+                    links.append(f"🌟 [IMDB]({details['imdb_link']})")
+
+                # 用竖线分隔
+                parts.append(" | ".join(links))
             
                 if get_setting('settings.content_settings.new_library_notification.show_overview'):
                     overview_text = item.get('Overview', '暂无剧情介绍')
