@@ -382,10 +382,10 @@ def make_request_with_retry(method, url, max_retries=3, retry_delay=1, **kwargs)
             print(f"⚠️ 本地检查 reply_markup 时发生异常：{_e}")
 
     api_name = "Unknown API"
-    timeout = 15
+    timeout = 10
     if "api.telegram.org" in url:
         api_name = "Telegram"
-        timeout = 30
+        timeout = 20
     elif "api.themoviedb.org" in url:
         api_name = "TMDB"
     elif "opendata.baidu.com" in url:
@@ -778,7 +778,7 @@ def scan_all_emby_libraries():
     url = f"{EMBY_SERVER_URL}/Library/Refresh"
     params = {'api_key': EMBY_API_KEY}
     
-    response = make_request_with_retry('POST', url, params=params, timeout=30)
+    response = make_request_with_retry('POST', url, params=params, timeout=20)
     
     if response and response.status_code == 204:
         success_msg = "✅ 已向 Emby 发送扫描所有媒体库的请求。任务将在后台执行。"
@@ -805,7 +805,7 @@ def refresh_emby_item(item_id, item_name):
         'ReplaceAllMetadata': 'true'
     }
     
-    response = make_request_with_retry('POST', url, params=params, timeout=30)
+    response = make_request_with_retry('POST', url, params=params, timeout=20)
     
     if response and response.status_code == 204:
         success_msg = f"✅ 已向 Emby 发送刷新请求： “{item_name}”。刷新过程将在后台进行，请稍后在 Emby 中查看结果。"
@@ -836,7 +836,7 @@ def delete_emby_item(item_id, item_name):
         'X-Emby-Authorization': auth_header_value
     }
     
-    response = make_request_with_retry('DELETE', url, headers=headers, timeout=15)
+    response = make_request_with_retry('DELETE', url, headers=headers, timeout=10)
     
     if response and response.status_code == 204:
         success_msg = f'✅ Emby 媒体库中的节目 “{item_name}” 已成功删除。'
@@ -4718,7 +4718,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
                         full_overview = details.get('overview', '暂无剧情介绍') 
                         parts.append(f"📝 剧情介绍：{escape_markdown(full_overview)}")
                         #parts.append(f"📝 剧情介绍：{details['overview']}")
-                        parts.append("\n")
+                        parts.append("")
                 
                 if stream_details:
                     formatted_specs = format_stream_details_message(stream_details, prefix='new_library_notification')
