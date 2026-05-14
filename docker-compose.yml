@@ -23,4 +23,3 @@ services:
       
       # --- 系统配置 ---
       - TZ=Asia/Shanghai
-      - PYTHONUNBUFFERED=1
