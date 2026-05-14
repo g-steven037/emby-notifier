@@ -20,7 +20,7 @@ TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
 EMBY_SERVER = os.environ.get('EMBY_SERVER', '').rstrip('/')
 EMBY_API_KEY = os.environ.get('EMBY_API_KEY')
 
-# 聚合队列锁[cite: 1]
+# 聚合队列锁
 QUEUE = {}
 QUEUE_LOCK = threading.Lock()
 
@@ -101,7 +101,6 @@ def process_series(series_id):
     imdb_id = item.get('ProviderIds', {}).get('Imdb', '')
     tmdb_id = item.get('SeriesProviderIds', {}).get('Tmdb') or item.get('ProviderIds', {}).get('Tmdb')
 
-    # 精准反查[cite: 1]
     if not tmdb_id and EMBY_SERVER:
         time.sleep(3)
         try:
@@ -134,7 +133,6 @@ def process_series(series_id):
         total_eps = str(tmdb_info.get('number_of_episodes', '--'))
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
 
-        # 缺集计算（仅限已播）[cite: 1]
         last_ep = tmdb_info.get('last_episode_to_air')
         ls, le = (last_ep['season_number'], last_ep['episode_number']) if last_ep else (999, 999)
         for s_data in tmdb_info.get('seasons', []):
@@ -144,7 +142,6 @@ def process_series(series_id):
                     if status == "已完结" or (s_num < ls) or (s_num == ls and e_num <= le):
                         expected_eps.add((s_num, e_num))
 
-    # 下集预报[cite: 1]
     next_ep_str = "已完结"
     max_s = max([s for s, e in existing_eps]) if existing_eps else 1
     max_e = max([e for s, e in existing_eps if s == max_s]) if existing_eps else 0
@@ -156,18 +153,28 @@ def process_series(series_id):
         found_n = True
     
     if not found_n and status == "更新中" and tmdb_id:
-        if len(existing_eps) < int(tmdb_info.get('number_of_episodes', 0)):
-            sd = get_tmdb_season_detail(tmdb_id, max_s)
-            for ep in sd.get('episodes', []) if sd else []:
-                if ep['episode_number'] > max_e and ep.get('air_date'):
-                    next_ep_str = f"S{max_s:02d}E{ep['episode_number']:02d} ({ep['air_date'][5:]})"
-                    found_n = True; break
-            if not found_n: next_ep_str = f"S{max_s:02d}E{max_e+1:02d} (待定)"
-        else: next_ep_str = "本季完结 (待更新)"
+        try:
+            tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
+            if len(existing_eps) < tmdb_total_val:
+                sd = get_tmdb_season_detail(tmdb_id, max_s)
+                for ep in sd.get('episodes', []) if sd else []:
+                    if ep['episode_number'] > max_e and ep.get('air_date'):
+                        next_ep_str = f"S{max_s:02d}E{ep['episode_number']:02d} ({ep['air_date'][5:]})"
+                        found_n = True; break
+                if not found_n: next_ep_str = f"S{max_s:02d}E{max_e+1:02d} (待定)"
+            else: next_ep_str = "本季完结 (待更新)"
+        except: pass
 
     missing_line = f"⚠️ 缺集：{format_s_e(expected_eps - existing_eps)}\n" if (expected_eps - existing_eps) else ""
-    overview = re.sub('<[^<]+?>', '', tmdb_info.get('overview', item.get('Overview', ''))).replace('&', '&amp;').replace('<', '&lt;')
     
+    # 简介字数控制逻辑：限制为 80 字
+    raw_overview = tmdb_info.get('overview', item.get('Overview', '暂无简介')) or '暂无简介'
+    clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    if len(clean_overview) > 80:
+        display_overview = clean_overview[:80] + "..."
+    else:
+        display_overview = clean_overview
+
     msg = f"""📺 剧集入库：{series_name} ({year})
 ---------------------
 📥 新增：{format_s_e(task['episodes']) or '剧集刷新'}
@@ -180,7 +187,7 @@ def process_series(series_id):
 {missing_line}🖥 质量：{quality}
 🍿 TMDB ID：{tmdb_id or '未知'}
 
-📝 简介：{overview[:120]}...
+📝 简介：{display_overview}
 
 <a href="https://www.themoviedb.org/tv/{tmdb_id}">🔗 TMDB</a> | <a href="https://www.douban.com/search?cat=1002&q={imdb_id or series_name}">✳️ 豆瓣</a> | <a href="https://www.imdb.com/title/{imdb_id}/">🌟 IMDb</a>"""
     send_tg_message(msg, backdrop_url)
@@ -191,8 +198,16 @@ def process_movie(data):
     ti = get_tmdb_data(tmdb_id, 'movie')
     quality = extract_quality(item.get('Path', ''))
     bp = f"https://image.tmdb.org/t/p/w1280{ti['backdrop_path']}" if ti and ti.get('backdrop_path') else None
-    co = re.sub('<[^<]+?>', '', ti.get('overview', item.get('Overview', ''))).replace('&', '&amp;')
-    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{ti.get('genres',[{}])[0].get('name','未知')}\n📅 首映：{ti.get('release_date','未知')}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]])}\n🖥 质量：{quality}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{co[:150]}...\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
+    
+    # 电影简介同样限制为 80 字
+    raw_overview = ti.get('overview', item.get('Overview', '暂无简介')) if ti else item.get('Overview', '暂无简介')
+    clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    if len(clean_overview) > 80:
+        display_overview = clean_overview[:80] + "..."
+    else:
+        display_overview = clean_overview
+
+    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{ti.get('genres',[{}])[0].get('name','未知') if ti else '未知'}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
     send_tg_message(msg, bp)
 
 @app.route('/webhook', methods=['POST'])
