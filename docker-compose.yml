@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  emby-notifier:
+    # 替换为你推送到 Docker Hub 的完整镜像名
+    image: steven03799/emby-notifier:latest
+    container_name: emby-notifier
+    restart: unless-stopped
+    ports:
+      - "18089:18089"
+    environment:
+      # --- Telegram 配置 ---
+      - TG_BOT_TOKEN=你的_TG_BOT_TOKEN
+      - TG_CHAT_ID=你的_TG_CHAT_ID
+      
+      # --- 媒体元数据配置 ---
+      - TMDB_API_KEY=你的_TMDB_API_KEY
+      
+      # --- Emby API 配置 (用于反查 ID、扫描缺集及下集日期) ---
+      # 结尾不要带 /，例如 http://192.168.1.100:8096
+      - EMBY_SERVER=http://你的内网IP:8096
+      - EMBY_API_KEY=你的_EMBY_API_KEY
+      
+      # --- 系统配置 ---
+      - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
