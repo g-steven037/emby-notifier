@@ -74,7 +74,6 @@ version: '3.8'
 
 services:
   emby-notifier:
-    # 替换为你推送到 Docker Hub 的完整镜像名
     image: steven03799/emby-notifier:latest
     container_name: emby-notifier
     restart: unless-stopped
