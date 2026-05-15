@@ -129,16 +129,30 @@ def process_series(series_id):
     tmdb_total_val = 0
 
     if tmdb_info:
-        # ================= 核心修改：精简动漫类别的命名 =================
+        # ================= 核心修改：全谱系智能化地区与类别细分 =================
         countries = tmdb_info.get('origin_country', [])
         country = countries[0] if countries else ""
         genres_list = [g.get('name') for g in tmdb_info.get('genres', [])]
         
+        # 1. 动漫大类判定
         if "动画" in genres_list:
             if country in ["CN", "TW", "HK"]: genre = "国漫"
             elif country == "JP": genre = "日漫"
             elif country in ["US", "GB", "CA", "AU", "FR", "DE"]: genre = "欧美动漫"
             else: genre = "动漫"
+        # 2. 综艺大类判定（囊括真人秀、谈话、新闻等非剧集类综艺）
+        elif any(x in genres_list for x in ["真人秀", "谈话", "新闻"]):
+            if country in ["CN", "TW", "HK"]: genre = "国产综艺"
+            elif country == "KR": genre = "韩国综艺"
+            elif country == "JP": genre = "日本综艺"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美综艺"
+            else: genre = "综艺"
+        # 3. 纪录片大类判定
+        elif "纪录" in genres_list:
+            if country in ["CN", "TW", "HK"]: genre = "国产纪录片"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美纪录片"
+            else: genre = "纪录片"
+        # 4. 常规剧集判定
         else:
             if country in ["CN", "TW", "HK"]: genre = "国产剧"
             elif country == "KR": genre = "韩剧"
@@ -227,7 +241,6 @@ def process_movie(data):
     
     genre = "电影"
     if ti:
-        # 电影也同步应用精简后的动漫分类名称
         countries = ti.get('production_countries', [])
         country = countries[0].get('iso_3166_1', '') if countries else ""
         genres_list = [g.get('name') for g in ti.get('genres', [])]
@@ -237,6 +250,10 @@ def process_movie(data):
             elif country == "JP": genre = "日漫"
             elif country in ["US", "GB", "CA", "AU", "FR", "DE"]: genre = "欧美动漫"
             else: genre = "动漫"
+        elif "纪录" in genres_list:
+            if country in ["CN", "TW", "HK"]: genre = "华语纪录片"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美纪录片"
+            else: genre = "纪录片"
         else:
             if country in ["CN", "TW", "HK"]: genre = "华语电影"
             elif country == "KR": genre = "韩国电影"
