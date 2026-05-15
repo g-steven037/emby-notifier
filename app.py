@@ -123,7 +123,10 @@ def process_series(series_id):
     
     genre, premiere, total_eps, status_raw, actors, network, backdrop_url = "未知", "未知", "--", "未知", "未知", "未知", None
     expected_eps = set()
-    tmdb_total_val = 0
+    
+    # 确定当前入库剧集所属的季 (取聚合列表中的第一季)
+    added_seasons = sorted(list(set([s for s, e in task['episodes']])))
+    current_s = added_seasons[0] if added_seasons else 1
 
     if tmdb_info:
         genre = tmdb_info.get('genres', [{}])[0].get('name', '未知')
@@ -131,23 +134,28 @@ def process_series(series_id):
         status_raw = "更新中" if tmdb_info.get('in_production') else "已完结"
         actors = " / ".join([a['name'] for a in tmdb_info.get('credits', {}).get('cast', [])[:3]])
         network = tmdb_info.get('networks', [])[0]['name'] if tmdb_info.get('networks') else "未知"
-        tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
-        total_eps = str(tmdb_total_val)
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
 
-        # 缺集计算
-        last_ep = tmdb_info.get('last_episode_to_air')
-        ls, le = (last_ep['season_number'], last_ep['episode_number']) if last_ep else (999, 999)
+        # 核心修改：锁定当前季的总集数
+        current_season_total = 0
         for s_data in tmdb_info.get('seasons', []):
             s_num = s_data.get('season_number', 0)
+            if s_num == current_s:
+                current_season_total = s_data.get('episode_count', 0)
+            
+            # 计算缺集逻辑（仍需遍历所有季确保历史补漏）
             if s_num > 0:
+                last_ep = tmdb_info.get('last_episode_to_air')
+                ls, le = (last_ep['season_number'], last_ep['episode_number']) if last_ep else (999, 999)
                 for e_num in range(1, s_data.get('episode_count', 0) + 1):
                     if status_raw == "已完结" or (s_num < ls) or (s_num == ls and e_num <= le):
                         expected_eps.add((s_num, e_num))
+        
+        total_eps = str(current_season_total) if current_season_total > 0 else "--"
 
-    # ================= 核心判定逻辑修正 =================
-    # 强制修正状态判定：如果本地拥有的总集数已经等于或超过 TMDB 记录的总集数，直接视作完结
-    is_fully_collected = (tmdb_total_val > 0 and len(existing_eps) >= tmdb_total_val)
+    # 判定全剧是否收全（由于你想显示单季总数，判定逻辑仍参考全剧总数）
+    all_ep_count = int(tmdb_info.get('number_of_episodes', 0)) if tmdb_info else 0
+    is_fully_collected = (all_ep_count > 0 and len(existing_eps) >= all_ep_count)
     status_display = "已完结" if (status_raw == "已完结" or is_fully_collected) else "更新中"
     status_icon = "✅" if status_display == "已完结" else "🔄"
     
