@@ -129,30 +129,25 @@ def process_series(series_id):
     tmdb_total_val = 0
 
     if tmdb_info:
-        # ================= 核心修改：全谱系智能化地区与类别细分 =================
         countries = tmdb_info.get('origin_country', [])
         country = countries[0] if countries else ""
         genres_list = [g.get('name') for g in tmdb_info.get('genres', [])]
         
-        # 1. 动漫大类判定
         if "动画" in genres_list:
             if country in ["CN", "TW", "HK"]: genre = "国漫"
             elif country == "JP": genre = "日漫"
             elif country in ["US", "GB", "CA", "AU", "FR", "DE"]: genre = "欧美动漫"
             else: genre = "动漫"
-        # 2. 综艺大类判定（囊括真人秀、谈话、新闻等非剧集类综艺）
         elif any(x in genres_list for x in ["真人秀", "谈话", "新闻"]):
             if country in ["CN", "TW", "HK"]: genre = "国产综艺"
             elif country == "KR": genre = "韩国综艺"
             elif country == "JP": genre = "日本综艺"
             elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美综艺"
             else: genre = "综艺"
-        # 3. 纪录片大类判定
         elif "纪录" in genres_list:
             if country in ["CN", "TW", "HK"]: genre = "国产纪录片"
             elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美纪录片"
             else: genre = "纪录片"
-        # 4. 常规剧集判定
         else:
             if country in ["CN", "TW", "HK"]: genre = "国产剧"
             elif country == "KR": genre = "韩剧"
@@ -209,7 +204,20 @@ def process_series(series_id):
         
         next_ep_line = f"🗓 下集：{next_ep_str}\n"
 
+    # ================= 季范围动态锁定判定 =================
     missing_eps = expected_eps - existing_eps
+    target_seasons = set(added_seasons)
+    if not target_seasons:
+        if item.get('Type') == 'Season' and item.get('IndexNumber'):
+            target_seasons.add(item.get('IndexNumber'))
+        elif item.get('Type') == 'Episode' and item.get('ParentIndexNumber'):
+            target_seasons.add(item.get('ParentIndexNumber'))
+            
+    if target_seasons:
+        missing_eps = { (s, e) for s, e in missing_eps if s in target_seasons }
+    else:
+        missing_eps = set()
+
     missing_line = f"⚠️ 缺集：{format_s_e(missing_eps)}\n" if missing_eps else ""
     
     raw_overview = tmdb_info.get('overview', item.get('Overview', '暂无简介')) or '暂无简介'
@@ -277,7 +285,7 @@ def emby_webhook():
     if item.get('Type') == 'Movie':
         threading.Thread(target=process_movie, args=(d,)).start()
     elif item.get('Type') in ['Episode', 'Series', 'Season']:
-        sid = item.get('SeriesId') if item.get('Type') == 'Episode' else item.get('Id')
+        sid = item.get('SeriesId') if item.get('Type') in ['Episode', 'Season'] else item.get('Id')
         with QUEUE_LOCK:
             if sid not in QUEUE:
                 QUEUE[sid] = {'episodes': set(), 'data': d, 'latest_path': item.get('Path', ''),
