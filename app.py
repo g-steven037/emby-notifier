@@ -124,26 +124,41 @@ def process_series(series_id):
     genre, premiere, total_eps, status_raw, actors, network, backdrop_url = "未知", "未知", "--", "未知", "未知", "未知", None
     expected_eps = set()
     
-    # 确定当前入库剧集所属的季 (取聚合列表中的第一季)
     added_seasons = sorted(list(set([s for s, e in task['episodes']])))
     current_s = added_seasons[0] if added_seasons else 1
+    tmdb_total_val = 0
 
     if tmdb_info:
-        genre = tmdb_info.get('genres', [{}])[0].get('name', '未知')
+        # ================= 核心修改：精简动漫类别的命名 =================
+        countries = tmdb_info.get('origin_country', [])
+        country = countries[0] if countries else ""
+        genres_list = [g.get('name') for g in tmdb_info.get('genres', [])]
+        
+        if "动画" in genres_list:
+            if country in ["CN", "TW", "HK"]: genre = "国漫"
+            elif country == "JP": genre = "日漫"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE"]: genre = "欧美动漫"
+            else: genre = "动漫"
+        else:
+            if country in ["CN", "TW", "HK"]: genre = "国产剧"
+            elif country == "KR": genre = "韩剧"
+            elif country == "JP": genre = "日剧"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美剧"
+            else:
+                genre = tmdb_info.get('genres', [{}])[0].get('name', '剧情') if tmdb_info.get('genres') else '剧情'
+
         premiere = tmdb_info.get('first_air_date', '未知')
         status_raw = "更新中" if tmdb_info.get('in_production') else "已完结"
         actors = " / ".join([a['name'] for a in tmdb_info.get('credits', {}).get('cast', [])[:3]])
         network = tmdb_info.get('networks', [])[0]['name'] if tmdb_info.get('networks') else "未知"
-        if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
-
-        # 核心修改：锁定当前季的总集数
+        tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
+        
+        # 锁定当前季的总集数
         current_season_total = 0
         for s_data in tmdb_info.get('seasons', []):
             s_num = s_data.get('season_number', 0)
             if s_num == current_s:
                 current_season_total = s_data.get('episode_count', 0)
-            
-            # 计算缺集逻辑（仍需遍历所有季确保历史补漏）
             if s_num > 0:
                 last_ep = tmdb_info.get('last_episode_to_air')
                 ls, le = (last_ep['season_number'], last_ep['episode_number']) if last_ep else (999, 999)
@@ -152,10 +167,9 @@ def process_series(series_id):
                         expected_eps.add((s_num, e_num))
         
         total_eps = str(current_season_total) if current_season_total > 0 else "--"
+        if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
 
-    # 判定全剧是否收全（由于你想显示单季总数，判定逻辑仍参考全剧总数）
-    all_ep_count = int(tmdb_info.get('number_of_episodes', 0)) if tmdb_info else 0
-    is_fully_collected = (all_ep_count > 0 and len(existing_eps) >= all_ep_count)
+    is_fully_collected = (tmdb_total_val > 0 and len(existing_eps) >= tmdb_total_val)
     status_display = "已完结" if (status_raw == "已完结" or is_fully_collected) else "更新中"
     status_icon = "✅" if status_display == "已完结" else "🔄"
     
@@ -210,10 +224,32 @@ def process_movie(data):
     ti = get_tmdb_data(tmdb_id, 'movie')
     quality = extract_quality(item.get('Path', ''))
     bp = f"https://image.tmdb.org/t/p/w1280{ti['backdrop_path']}" if ti and ti.get('backdrop_path') else None
+    
+    genre = "电影"
+    if ti:
+        # 电影也同步应用精简后的动漫分类名称
+        countries = ti.get('production_countries', [])
+        country = countries[0].get('iso_3166_1', '') if countries else ""
+        genres_list = [g.get('name') for g in ti.get('genres', [])]
+        
+        if "动画" in genres_list:
+            if country in ["CN", "TW", "HK"]: genre = "国漫"
+            elif country == "JP": genre = "日漫"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE"]: genre = "欧美动漫"
+            else: genre = "动漫"
+        else:
+            if country in ["CN", "TW", "HK"]: genre = "华语电影"
+            elif country == "KR": genre = "韩国电影"
+            elif country == "JP": genre = "日本电影"
+            elif country in ["US", "GB", "CA", "AU", "FR", "DE", "ES", "IT"]: genre = "欧美电影"
+            else:
+                genre = ti.get('genres', [{}])[0].get('name', '电影') if ti.get('genres') else '电影'
+
     raw_overview = ti.get('overview', item.get('Overview', '暂无简介')) if ti else item.get('Overview', '暂无简介')
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
-    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{ti.get('genres',[{}])[0].get('name','未知') if ti else '未知'}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
+    
+    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
     send_tg_message(msg, bp)
 
 @app.route('/webhook', methods=['POST'])
