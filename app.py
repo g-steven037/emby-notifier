@@ -25,6 +25,57 @@ EMBY_API_KEY = os.environ.get('EMBY_API_KEY')
 QUEUE = {}
 QUEUE_LOCK = threading.Lock()
 
+# ================= 💾 文件大小格式化与高精度探测引擎 =================
+def format_size(bytes_size):
+    if not bytes_size: return "未知"
+    try:
+        bytes_size = float(bytes_size)
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if bytes_size < 1024:
+                return f"{bytes_size:.2f} {unit}"
+            bytes_size /= 1024
+    except: pass
+    return "未知"
+
+def get_strm_size(strm_path):
+    if not strm_path or not os.path.exists(strm_path):
+        return "未知"
+    try:
+        with open(strm_path, 'r', encoding='utf-8') as f:
+            content = f.read().strip()
+        if not content: return "未知"
+        
+        # 形式 1: HTTP 智能探测 (兼容 CD2 / Alist 直链)
+        if content.startswith(('http://', 'https://')):
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            # 策略 A：尝试轻量级 HEAD 请求
+            try:
+                res = requests.head(content, headers=headers, allow_redirects=True, timeout=4)
+                size = res.headers.get('Content-Length')
+                if size and int(size) > 1024: # 略过几百字节的提示性网页
+                    return format_size(size)
+            except: pass
+            
+            # 策略 B：若 HEAD 被封禁或失效，降级使用 Range 请求第 0 字节 (极为精准且省流量)
+            headers['Range'] = 'bytes=0-0'
+            res_get = requests.get(content, headers=headers, allow_redirects=True, timeout=4)
+            cr = res_get.headers.get('Content-Range')
+            if cr and '/' in cr:
+                return format_size(cr.split('/')[-1])
+            size = res_get.headers.get('Content-Length')
+            if size: return format_size(size)
+
+        # 形式 2: 本地绝对路径探测 (/CloudNAS/...)
+        elif content.startswith('/'):
+            if os.path.exists(content):
+                return format_size(os.path.getsize(content))
+            else:
+                logger.warning(f"strm指向的本地路径在容器内未找到，请检查映射: {content}")
+    except Exception as e:
+        logger.error(f"解析 strm 文件真实大小失败 ({strm_path}): {e}")
+    return "未知"
+# ======================================================================
+
 def send_tg_message(text, image_url=None):
     logger.info("========== 准备发送至 Telegram ==========\n" + text + "\n=========================================")
     if image_url:
@@ -120,7 +171,11 @@ def process_series(series_id):
         except: pass
 
     existing_eps, api_path = get_existing_episodes(series_id)
-    quality = extract_quality(task['latest_path'] or api_path)
+    
+    # 动态抓取 strm 文件内部的真实大小
+    strm_file_path = task['latest_path'] or api_path
+    file_size_str = get_strm_size(strm_file_path) if (strm_file_path and strm_file_path.endswith('.strm')) else "未知"
+    quality = extract_quality(strm_file_path)
     
     genre, premiere, total_eps, status_raw, actors, network, backdrop_url = "未知", "未知", "--", "未知", "未知", "未知", None
     expected_eps = set()
@@ -248,7 +303,7 @@ def process_series(series_id):
 {status_icon} 总集：共 {total_eps} 集 ({status_display})
 {next_ep_line}👥 主演：{actors}
 📡 平台：{network}
-{missing_line}🖥 质量：{quality}
+{missing_line}🖥 质量：{quality} | 💾 大小：{file_size_str}
 🍿 TMDB ID：{tmdb_id or '未知'}
 
 📝 简介：{display_overview}
@@ -260,7 +315,14 @@ def process_movie(data):
     item = data.get('Item', {})
     tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
     ti = get_tmdb_data(tmdb_id, 'movie')
-    quality = extract_quality(item.get('Path', ''))
+    
+    movie_path = item.get('Path', '')
+    if movie_path and movie_path.endswith('.strm'):
+        file_size_str = get_strm_size(movie_path)
+    else:
+        file_size_str = format_size(item.get('Size'))
+        
+    quality = extract_quality(movie_path)
     bp = f"https://image.tmdb.org/t/p/w1280{ti['backdrop_path']}" if ti and ti.get('backdrop_path') else None
     
     genre = "电影"
@@ -290,20 +352,18 @@ def process_movie(data):
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
     
-    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
+    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality} | 💾 大小：{file_size_str}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
     send_tg_message(msg, bp)
 
 @app.route('/webhook', methods=['POST'])
 def emby_webhook():
     d = request.json if request.is_json else json.loads(request.form.get('data', '{}'))
     
-    # ================= 🚀 核心测试逻辑：完整格式化打印原始 Webhook 数据到日志 =================
     try:
         pretty_json = json.dumps(d, indent=4, ensure_ascii=False)
         logger.info(f"\n==================== 收到 EMBY WEBHOOK 完整原始数据 ====================\n{pretty_json}\n=========================================================================")
     except Exception as e:
         logger.error(f"解析并打印原始 Webhook 失败: {e}")
-    # ======================================================================================
 
     event, item = d.get('Event', ''), d.get('Item', {})
     if event not in ['library.new', 'Item.Added', 'ItemAdded']: return jsonify({"status": "ignored"}), 200
