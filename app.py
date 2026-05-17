@@ -17,7 +17,7 @@ app = Flask(__name__)
 # 配置环境变量
 TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN')
 TG_CHAT_ID = os.environ.get('TG_CHAT_ID')
-TG_MONITOR_CHANNEL_ID = os.environ.get('TG_MONITOR_CHANNEL_ID') # 显式监控频道
+TG_MONITOR_CHANNEL_ID = os.environ.get('TG_MONITOR_CHANNEL_ID') 
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
 EMBY_SERVER = os.environ.get('EMBY_SERVER', '').rstrip('/')
 EMBY_API_KEY = os.environ.get('EMBY_API_KEY')
@@ -34,12 +34,11 @@ def parse_and_store_size(text):
     if not text: return
     try:
         tmdb_match = re.search(r'TMDB ID[：:]\s*(\d+)', text)
-        # 兼容 "🧊 大小：" 或 "大小：" 后面的整行文本
         size_match = re.search(r'(🧊\s*)?大小[：:]\s*(.*)', text)
         if not tmdb_match or not size_match: return
         
         tmdb_id = tmdb_match.group(1)
-        size_str = size_match.group(2).strip() # 完整抄下后面的文本，如 "1 个 / 1.85G"
+        size_str = size_match.group(2).strip() 
         is_movie = "电影" in text or "🎬" in text
         
         with SIZE_CACHE_LOCK:
@@ -79,7 +78,6 @@ def telegram_polling_thread():
                     offset = update["update_id"] + 1
                     channel_post = update.get("channel_post")
                     if channel_post:
-                        # 核心校验：如果配置了目标频道 ID，则非目标频道的数据一律拦截阻断
                         channel_id = str(channel_post.get("chat", {}).get("id", ""))
                         if TG_MONITOR_CHANNEL_ID and channel_id != str(TG_MONITOR_CHANNEL_ID):
                             continue
@@ -188,7 +186,6 @@ def process_series(series_id):
     existing_eps, api_path = get_existing_episodes(series_id)
     quality = extract_quality(task['latest_path'] or api_path)
     
-    # 从本地频道缓存检索大小
     sizes_found = []
     with SIZE_CACHE_LOCK:
         for s_num, e_num in task['episodes']:
@@ -240,12 +237,12 @@ def process_series(series_id):
         network = tmdb_info.get('networks', [])[0]['name'] if tmdb_info.get('networks') else "未知"
         tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
         
-        if sd:
-            current_season_total = sd.get('episode_count', 0)
-        else:
-            for s_data in tmdb_info.get('seasons', []):
-                if s_data.get('season_number') == current_s:
-                    current_season_total = s_data.get('episode_count', 0)
+        # ================= 🌟 理论回归：100% 锁定主信息 seasons 提取单季总集数 =================
+        for s_data in tmdb_info.get('seasons', []):
+            if s_data.get('season_number') == current_s:
+                current_season_total = s_data.get('episode_count', 0)
+                break
+        # ==================================================================================
         
         total_eps = str(current_season_total) if current_season_total > 0 else "--"
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
@@ -314,7 +311,6 @@ def process_series(series_id):
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
 
-    # ================= ⚡ 核心修改：大小独立成行并完全复刻样式 =================
     msg = f"""📺 剧集入库：{series_name} ({year})
 ---------------------
 📥 新增：{format_s_e(task['episodes']) or '剧集刷新'}
