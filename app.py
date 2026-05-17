@@ -17,63 +17,78 @@ app = Flask(__name__)
 # 配置环境变量
 TG_BOT_TOKEN = os.environ.get('TG_BOT_TOKEN')
 TG_CHAT_ID = os.environ.get('TG_CHAT_ID')
+TG_MONITOR_CHANNEL_ID = os.environ.get('TG_MONITOR_CHANNEL_ID') # 显式监控频道
 TMDB_API_KEY = os.environ.get('TMDB_API_KEY')
 EMBY_SERVER = os.environ.get('EMBY_SERVER', '').rstrip('/')
 EMBY_API_KEY = os.environ.get('EMBY_API_KEY')
 
-# 聚合队列锁
+# 队列锁与全局大小缓存
 QUEUE = {}
 QUEUE_LOCK = threading.Lock()
 
-# ================= 💾 文件大小格式化与高精度探测引擎 =================
-def format_size(bytes_size):
-    if not bytes_size: return "未知"
-    try:
-        bytes_size = float(bytes_size)
-        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-            if bytes_size < 1024:
-                return f"{bytes_size:.2f} {unit}"
-            bytes_size /= 1024
-    except: pass
-    return "未知"
+TELEGRAM_SIZE_CACHE = {}
+SIZE_CACHE_LOCK = threading.Lock()
 
-def get_strm_size(strm_path):
-    if not strm_path or not os.path.exists(strm_path):
-        return "未知"
+# ================= 🛰️ 后台 Telegram 频道精准拦截与大小全抄引擎 =================
+def parse_and_store_size(text):
+    if not text: return
     try:
-        with open(strm_path, 'r', encoding='utf-8') as f:
-            content = f.read().strip()
-        if not content: return "未知"
+        tmdb_match = re.search(r'TMDB ID[：:]\s*(\d+)', text)
+        # 兼容 "🧊 大小：" 或 "大小：" 后面的整行文本
+        size_match = re.search(r'(🧊\s*)?大小[：:]\s*(.*)', text)
+        if not tmdb_match or not size_match: return
         
-        # 形式 1: HTTP 智能探测 (兼容 CD2 / Alist 直链)
-        if content.startswith(('http://', 'https://')):
-            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-            # 策略 A：尝试轻量级 HEAD 请求
-            try:
-                res = requests.head(content, headers=headers, allow_redirects=True, timeout=4)
-                size = res.headers.get('Content-Length')
-                if size and int(size) > 1024: # 略过几百字节的提示性网页
-                    return format_size(size)
-            except: pass
-            
-            # 策略 B：若 HEAD 被封禁或失效，降级使用 Range 请求第 0 字节 (极为精准且省流量)
-            headers['Range'] = 'bytes=0-0'
-            res_get = requests.get(content, headers=headers, allow_redirects=True, timeout=4)
-            cr = res_get.headers.get('Content-Range')
-            if cr and '/' in cr:
-                return format_size(cr.split('/')[-1])
-            size = res_get.headers.get('Content-Length')
-            if size: return format_size(size)
-
-        # 形式 2: 本地绝对路径探测 (/CloudNAS/...)
-        elif content.startswith('/'):
-            if os.path.exists(content):
-                return format_size(os.path.getsize(content))
+        tmdb_id = tmdb_match.group(1)
+        size_str = size_match.group(2).strip() # 完整抄下后面的文本，如 "1 个 / 1.85G"
+        is_movie = "电影" in text or "🎬" in text
+        
+        with SIZE_CACHE_LOCK:
+            if is_movie:
+                TELEGRAM_SIZE_CACHE[f"movie_{tmdb_id}"] = size_str
+                logger.info(f"[📥 频道抓取] 成功缓存电影大小: TMDB={tmdb_id} -> {size_str}")
             else:
-                logger.warning(f"strm指向的本地路径在容器内未找到，请检查映射: {content}")
+                season_match = re.search(r'S(\d+)', text, re.I)
+                if season_match:
+                    s = int(season_match.group(1))
+                    range_match = re.search(r'E(\d+)\s*-\s*E(\d+)', text, re.I)
+                    if range_match:
+                        start, end = int(range_match.group(1)), int(range_match.group(2))
+                        ep_list = list(range(start, end + 1))
+                    else:
+                        ep_list = [int(x) for x in re.findall(r'E(\d+)', text, re.I)]
+                    
+                    if ep_list:
+                        for e in ep_list:
+                            TELEGRAM_SIZE_CACHE[f"tv_{tmdb_id}_{s}_{e}"] = size_str
+                        logger.info(f"[📥 频道抓取] 成功缓存剧集大小: TMDB={tmdb_id}, S{s:02d}E{ep_list} -> {size_str}")
     except Exception as e:
-        logger.error(f"解析 strm 文件真实大小失败 ({strm_path}): {e}")
-    return "未知"
+        logger.error(f"解析监控频道消息失败: {e}")
+
+def telegram_polling_thread():
+    if not TG_BOT_TOKEN:
+        logger.error("未配置 TG_BOT_TOKEN，大小捕获监听启动失败！")
+        return
+    logger.info(f"📡 [监听器激活] 正在启动辅助频道消息捕获引擎... 目标过滤ID: {TG_MONITOR_CHANNEL_ID or '未指定(接收全部)'}")
+    offset = 0
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TG_BOT_TOKEN}/getUpdates?offset={offset}&timeout=30"
+            res = requests.get(url, timeout=35).json()
+            if res.get("ok"):
+                for update in res.get("result", []):
+                    offset = update["update_id"] + 1
+                    channel_post = update.get("channel_post")
+                    if channel_post:
+                        # 核心校验：如果配置了目标频道 ID，则非目标频道的数据一律拦截阻断
+                        channel_id = str(channel_post.get("chat", {}).get("id", ""))
+                        if TG_MONITOR_CHANNEL_ID and channel_id != str(TG_MONITOR_CHANNEL_ID):
+                            continue
+                            
+                        text = channel_post.get("text") or channel_post.get("caption") or ""
+                        parse_and_store_size(text)
+        except Exception as e:
+            logger.warning(f"辅助监听轮询发生波动 (5秒后重试): {e}")
+            time.sleep(5)
 # ======================================================================
 
 def send_tg_message(text, image_url=None):
@@ -171,12 +186,16 @@ def process_series(series_id):
         except: pass
 
     existing_eps, api_path = get_existing_episodes(series_id)
+    quality = extract_quality(task['latest_path'] or api_path)
     
-    # 动态抓取 strm 文件内部的真实大小
-    strm_file_path = task['latest_path'] or api_path
-    file_size_str = get_strm_size(strm_file_path) if (strm_file_path and strm_file_path.endswith('.strm')) else "未知"
-    quality = extract_quality(strm_file_path)
-    
+    # 从本地频道缓存检索大小
+    sizes_found = []
+    with SIZE_CACHE_LOCK:
+        for s_num, e_num in task['episodes']:
+            sz = TELEGRAM_SIZE_CACHE.get(f"tv_{tmdb_id}_{s_num}_{e_num}")
+            if sz and sz not in sizes_found: sizes_found.append(sz)
+    file_size_str = ", ".join(sizes_found) if sizes_found else "未知"
+
     genre, premiere, total_eps, status_raw, actors, network, backdrop_url = "未知", "未知", "--", "未知", "未知", "未知", None
     expected_eps = set()
     
@@ -295,6 +314,7 @@ def process_series(series_id):
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
 
+    # ================= ⚡ 核心修改：大小独立成行并完全复刻样式 =================
     msg = f"""📺 剧集入库：{series_name} ({year})
 ---------------------
 📥 新增：{format_s_e(task['episodes']) or '剧集刷新'}
@@ -303,7 +323,8 @@ def process_series(series_id):
 {status_icon} 总集：共 {total_eps} 集 ({status_display})
 {next_ep_line}👥 主演：{actors}
 📡 平台：{network}
-{missing_line}🖥 质量：{quality} | 💾 大小：{file_size_str}
+{missing_line}🖥 质量：{quality}
+🧊 大小：{file_size_str}
 🍿 TMDB ID：{tmdb_id or '未知'}
 
 📝 简介：{display_overview}
@@ -315,16 +336,12 @@ def process_movie(data):
     item = data.get('Item', {})
     tmdb_id = item.get('ProviderIds', {}).get('Tmdb')
     ti = get_tmdb_data(tmdb_id, 'movie')
-    
-    movie_path = item.get('Path', '')
-    if movie_path and movie_path.endswith('.strm'):
-        file_size_str = get_strm_size(movie_path)
-    else:
-        file_size_str = format_size(item.get('Size'))
-        
-    quality = extract_quality(movie_path)
+    quality = extract_quality(item.get('Path', ''))
     bp = f"https://image.tmdb.org/t/p/w1280{ti['backdrop_path']}" if ti and ti.get('backdrop_path') else None
     
+    with SIZE_CACHE_LOCK:
+        file_size_str = TELEGRAM_SIZE_CACHE.get(f"movie_{tmdb_id}", "未知")
+
     genre = "电影"
     if ti:
         countries = ti.get('production_countries', [])
@@ -352,7 +369,7 @@ def process_movie(data):
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
     
-    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality} | 💾 大小：{file_size_str}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
+    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🧊 大小：{file_size_str}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
     send_tg_message(msg, bp)
 
 @app.route('/webhook', methods=['POST'])
@@ -382,4 +399,5 @@ def emby_webhook():
     return jsonify({"status": "ok"}), 200
 
 if __name__ == '__main__':
+    threading.Thread(target=telegram_polling_thread, daemon=True).start()
     app.run(host='0.0.0.0', port=18089)
