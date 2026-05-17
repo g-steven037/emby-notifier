@@ -296,6 +296,15 @@ def process_movie(data):
 @app.route('/webhook', methods=['POST'])
 def emby_webhook():
     d = request.json if request.is_json else json.loads(request.form.get('data', '{}'))
+    
+    # ================= 🚀 核心测试逻辑：完整格式化打印原始 Webhook 数据到日志 =================
+    try:
+        pretty_json = json.dumps(d, indent=4, ensure_ascii=False)
+        logger.info(f"\n==================== 收到 EMBY WEBHOOK 完整原始数据 ====================\n{pretty_json}\n=========================================================================")
+    except Exception as e:
+        logger.error(f"解析并打印原始 Webhook 失败: {e}")
+    # ======================================================================================
+
     event, item = d.get('Event', ''), d.get('Item', {})
     if event not in ['library.new', 'Item.Added', 'ItemAdded']: return jsonify({"status": "ignored"}), 200
     if item.get('Type') == 'Movie':
