@@ -29,8 +29,66 @@ QUEUE_LOCK = threading.Lock()
 TELEGRAM_SIZE_CACHE = {}
 SIZE_CACHE_LOCK = threading.Lock()
 
+# ================= 🧮 智能多轨体积与集数数学聚合引擎 =================
+def aggregate_sizes(sizes_list):
+    if not sizes_list:
+        return "未知"
+    
+    total_count = 0
+    total_size_mb = 0.0
+    has_count_format = False
+    has_raw_format = False
+    
+    for sz in sizes_list:
+        # 1. 尝试匹配标准的 "X 个 / Y" 格式
+        match_count = re.search(r'(\d+)\s*个\s*/\s*([\d.]+)\s*([gGmMtT][bB]?)', sz)
+        if match_count:
+            count = int(match_count.group(1))
+            val = float(match_count.group(2))
+            unit = match_count.group(3).upper()
+            
+            total_count += count
+            has_count_format = True
+            
+            if 'T' in unit: total_size_mb += val * 1024 * 1024
+            elif 'G' in unit: total_size_mb += val * 1024
+            else: total_size_mb += val
+        else:
+            # 2. 降级匹配纯大小裸数据格式，如 "5.2g" 或 "521M"
+            match_raw = re.search(r'([\d.]+)\s*([gGmMtT][bB]?)', sz)
+            if match_raw:
+                val = float(match_raw.group(1))
+                unit = match_raw.group(2).upper()
+                has_raw_format = True
+                
+                if 'T' in unit: total_size_mb += val * 1024 * 1024
+                elif 'G' in unit: total_size_mb += val * 1024
+                else: total_size_mb += val
+                    
+    if not has_count_format and not has_raw_format:
+        return ", ".join(sizes_list) # 若完全不符合规则，退回逗号拼接兜底
+        
+    # 动态逆向规格化体积单位
+    if total_size_mb >= 1024 * 1024:
+        final_val = total_size_mb / (1024 * 1024)
+        unit_str = "T" if final_val >= 1024 else "G"
+        if final_val >= 1024: final_val /= 1024
+    elif total_size_mb >= 1024:
+        final_val = total_size_mb / 1024
+        unit_str = "G"
+    else:
+        final_val = total_size_mb
+        unit_str = "M"
+        
+    if has_count_format:
+        if total_count == 0 and has_raw_format:
+            return f"{final_val:.2f}{unit_str}"
+        return f"{total_count} 个 / {final_val:.2f}{unit_str}"
+    else:
+        return f"{final_val:.2f}{unit_str}"
+
 # ================= 🛰️ 后台 Telegram 频道精准拦截与大小全抄引擎 =================
-def parse_and_store_size(text):
+def parse_and_store_size(text, msg_id=0):
     if not text: return
     try:
         tmdb_match = re.search(r'TMDB ID[：:]\s*(\d+)', text)
@@ -43,7 +101,8 @@ def parse_and_store_size(text):
         
         with SIZE_CACHE_LOCK:
             if is_movie:
-                TELEGRAM_SIZE_CACHE[f"movie_{tmdb_id}"] = size_str
+                # 电影缓存结构升级为元组，并记录唯一的原始 msg_id
+                TELEGRAM_SIZE_CACHE[f"movie_{tmdb_id}"] = (msg_id, size_str)
                 logger.info(f"[📥 频道抓取] 成功缓存电影大小: TMDB={tmdb_id} -> {size_str}")
             else:
                 season_match = re.search(r'S(\d+)', text, re.I)
@@ -58,8 +117,9 @@ def parse_and_store_size(text):
                     
                     if ep_list:
                         for e in ep_list:
-                            TELEGRAM_SIZE_CACHE[f"tv_{tmdb_id}_{s}_{e}"] = size_str
-                        logger.info(f"[📥 频道抓取] 成功缓存剧集大小: TMDB={tmdb_id}, S{s:02d}E{ep_list} -> {size_str}")
+                            # 剧集分集缓存同步绑定唯一的远程 msg_id
+                            TELEGRAM_SIZE_CACHE[f"tv_{tmdb_id}_{s}_{e}"] = (msg_id, size_str)
+                        logger.info(f"[📥 频道抓取] 成功缓存剧集大小: TMDB={tmdb_id}, S{s:02d}E{ep_list} -> {size_str} (MsgID: {msg_id})")
     except Exception as e:
         logger.error(f"解析监控频道消息失败: {e}")
 
@@ -82,8 +142,9 @@ def telegram_polling_thread():
                         if TG_MONITOR_CHANNEL_ID and channel_id != str(TG_MONITOR_CHANNEL_ID):
                             continue
                             
+                        msg_id = channel_post.get("message_id", 0) # 提炼 Telegram 原生消息ID
                         text = channel_post.get("text") or channel_post.get("caption") or ""
-                        parse_and_store_size(text)
+                        parse_and_store_size(text, msg_id)
         except Exception as e:
             logger.warning(f"辅助监听轮询发生波动 (5秒后重试): {e}")
             time.sleep(5)
@@ -186,12 +247,17 @@ def process_series(series_id):
     existing_eps, api_path = get_existing_episodes(series_id)
     quality = extract_quality(task['latest_path'] or api_path)
     
-    sizes_found = []
+    # ================= 🚀 核心逻辑升级：基于消息 ID 进行高精度的跨轨体积聚合 =================
+    matched_records = {}
     with SIZE_CACHE_LOCK:
         for s_num, e_num in task['episodes']:
-            sz = TELEGRAM_SIZE_CACHE.get(f"tv_{tmdb_id}_{s_num}_{e_num}")
-            if sz and sz not in sizes_found: sizes_found.append(sz)
-    file_size_str = ", ".join(sizes_found) if sizes_found else "未知"
+            record = TELEGRAM_SIZE_CACHE.get(f"tv_{tmdb_id}_{s_num}_{e_num}")
+            if record:
+                msg_id, sz = record
+                matched_records[msg_id] = sz # 用远程唯一的 message_id 作为字典 Key 实现无差错去重
+                
+    file_size_str = aggregate_sizes(list(matched_records.values()))
+    # ====================================================================================
 
     genre, premiere, total_eps, status_raw, actors, network, backdrop_url = "未知", "未知", "--", "未知", "未知", "未知", None
     expected_eps = set()
@@ -237,12 +303,10 @@ def process_series(series_id):
         network = tmdb_info.get('networks', [])[0]['name'] if tmdb_info.get('networks') else "未知"
         tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
         
-        # ================= 🌟 理论回归：100% 锁定主信息 seasons 提取单季总集数 =================
         for s_data in tmdb_info.get('seasons', []):
             if s_data.get('season_number') == current_s:
                 current_season_total = s_data.get('episode_count', 0)
                 break
-        # ==================================================================================
         
         total_eps = str(current_season_total) if current_season_total > 0 else "--"
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
@@ -336,7 +400,8 @@ def process_movie(data):
     bp = f"https://image.tmdb.org/t/p/w1280{ti['backdrop_path']}" if ti and ti.get('backdrop_path') else None
     
     with SIZE_CACHE_LOCK:
-        file_size_str = TELEGRAM_SIZE_CACHE.get(f"movie_{tmdb_id}", "未知")
+        record = TELEGRAM_SIZE_CACHE.get(f"movie_{tmdb_id}")
+        file_size_str = record[1] if record else "未知"
 
     genre = "电影"
     if ti:
@@ -365,7 +430,7 @@ def process_movie(data):
     clean_overview = re.sub('<[^<]+?>', '', raw_overview).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
     display_overview = (clean_overview[:80] + "...") if len(clean_overview) > 80 else clean_overview
     
-    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🧊 大小：{file_size_str}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{tmdb_id}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
+    msg = f"🎬 电影入库：{item.get('Name')} ({item.get('ProductionYear')})\n---------------------\n📚 类别：{genre}\n📅 首映：{ti.get('release_date','未知') if ti else '未知'}\n👥 主演：{' / '.join([a['name'] for a in ti.get('credits',{}).get('cast',[])[:3]]) if ti else '未知'}\n🖥 质量：{quality}\n🧊 大小：{file_size_str}\n🍿 TMDB ID：{tmdb_id}\n\n📝 简介：{display_overview}\n\n<a href='https://www.themoviedb.org/movie/{ti.get('id')}'>🔗 TMDB</a> | <a href='https://www.douban.com/search?cat=1002&q={item.get('Name')}'>✳️ 豆瓣</a> | <a href='https://www.imdb.com/title/{item.get('ProviderIds',{}).get('Imdb')}/'>🌟 IMDb</a>"
     send_tg_message(msg, bp)
 
 @app.route('/webhook', methods=['POST'])
