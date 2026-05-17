@@ -2,7 +2,8 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ "main" ]  # 当 main 分支有变动时触发
+    # 同时监听 main 和 test 分支的网页端提交变动
+    branches: [ "main", "test" ]
 
 jobs:
   build:
@@ -22,4 +23,6 @@ jobs:
         with:
           context: .
           push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/emby-notifier:latest
+          # 💡 自动感知分支：main 推送为 latest，test 推送为 test
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/emby-notifier:${{ github.ref_name == 'main' && 'latest' || 'test' }}
