@@ -6,6 +6,7 @@ import logging
 import requests
 import threading
 import datetime
+from flask import Flask, request, jsonify
 
 # 强制启用实时日志输出
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -129,7 +130,6 @@ def process_series(series_id):
     tmdb_total_val = 0
     current_season_total = 0
 
-    # 优先拉取当前入库季的详细排播表
     sd = get_tmdb_season_detail(tmdb_id, current_s) if tmdb_id else None
 
     if tmdb_info:
@@ -176,7 +176,6 @@ def process_series(series_id):
         total_eps = str(current_season_total) if current_season_total > 0 else "--"
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
 
-        # ================= 需求 1 落地：基于当前绝对时间线计算今日已播期望集数 =================
         today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         if status_raw == "已完结":
             if sd and sd.get('episodes'):
@@ -189,7 +188,6 @@ def process_series(series_id):
                 for ep in sd['episodes']:
                     e_num = ep.get('episode_number')
                     e_date = ep.get('air_date')
-                    # 只要排播日期小于或等于今天，就纳入期望集合中（完美解决当天连更只收录部分的问题）
                     if e_num and e_date and e_date <= today_str:
                         expected_eps.add((current_s, e_num))
 
@@ -204,17 +202,12 @@ def process_series(series_id):
         next_ep_str = "待定"
         today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         
-        # ================= 需求 2 落地：动态聚合计算下一个播放日的连播集数 =================
         if sd and sd.get('episodes'):
-            # 过滤出所有在今天之后的未来未播集
             future_eps = [ep for ep in sd['episodes'] if ep.get('air_date') and ep['air_date'] > today_str]
             if future_eps:
-                # 抓取距离今天最近的下一个播出日期
                 next_date = min(ep['air_date'] for ep in future_eps)
-                # 揪出当天要播放的所有集数
                 next_ep_nums = sorted([ep['episode_number'] for ep in future_eps if ep['air_date'] == next_date])
                 if next_ep_nums:
-                    # 如果多集连播，聚合为 E23-E24 / E23-E28 格式，单集则保持 E23
                     if len(next_ep_nums) > 1:
                         ep_range_str = f"E{next_ep_nums[0]:02d}-E{next_ep_nums[-1]:02d}"
                     else:
