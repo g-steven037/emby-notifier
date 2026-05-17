@@ -5,7 +5,7 @@ import json
 import logging
 import requests
 import threading
-from flask import Flask, request, jsonify
+import datetime
 
 # 强制启用实时日志输出
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
@@ -127,6 +127,10 @@ def process_series(series_id):
     added_seasons = sorted(list(set([s for s, e in task['episodes']])))
     current_s = added_seasons[0] if added_seasons else 1
     tmdb_total_val = 0
+    current_season_total = 0
+
+    # 优先拉取当前入库季的详细排播表
+    sd = get_tmdb_season_detail(tmdb_id, current_s) if tmdb_id else None
 
     if tmdb_info:
         countries = tmdb_info.get('origin_country', [])
@@ -162,21 +166,32 @@ def process_series(series_id):
         network = tmdb_info.get('networks', [])[0]['name'] if tmdb_info.get('networks') else "未知"
         tmdb_total_val = int(tmdb_info.get('number_of_episodes', 0))
         
-        # 锁定当前季的总集数
-        current_season_total = 0
-        for s_data in tmdb_info.get('seasons', []):
-            s_num = s_data.get('season_number', 0)
-            if s_num == current_s:
-                current_season_total = s_data.get('episode_count', 0)
-            if s_num > 0:
-                last_ep = tmdb_info.get('last_episode_to_air')
-                ls, le = (last_ep['season_number'], last_ep['episode_number']) if last_ep else (999, 999)
-                for e_num in range(1, s_data.get('episode_count', 0) + 1):
-                    if status_raw == "已完结" or (s_num < ls) or (s_num == ls and e_num <= le):
-                        expected_eps.add((s_num, e_num))
+        if sd:
+            current_season_total = sd.get('episode_count', 0)
+        else:
+            for s_data in tmdb_info.get('seasons', []):
+                if s_data.get('season_number') == current_s:
+                    current_season_total = s_data.get('episode_count', 0)
         
         total_eps = str(current_season_total) if current_season_total > 0 else "--"
         if tmdb_info.get('backdrop_path'): backdrop_url = f"https://image.tmdb.org/t/p/w1280{tmdb_info['backdrop_path']}"
+
+        # ================= 需求 1 落地：基于当前绝对时间线计算今日已播期望集数 =================
+        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        if status_raw == "已完结":
+            if sd and sd.get('episodes'):
+                for ep in sd['episodes']:
+                    if ep.get('episode_number'): expected_eps.add((current_s, ep['episode_number']))
+            elif current_season_total > 0:
+                for e_num in range(1, current_season_total + 1): expected_eps.add((current_s, e_num))
+        else:
+            if sd and sd.get('episodes'):
+                for ep in sd['episodes']:
+                    e_num = ep.get('episode_number')
+                    e_date = ep.get('air_date')
+                    # 只要排播日期小于或等于今天，就纳入期望集合中（完美解决当天连更只收录部分的问题）
+                    if e_num and e_date and e_date <= today_str:
+                        expected_eps.add((current_s, e_num))
 
     is_fully_collected = (tmdb_total_val > 0 and len(existing_eps) >= tmdb_total_val)
     status_display = "已完结" if (status_raw == "已完结" or is_fully_collected) else "更新中"
@@ -184,39 +199,47 @@ def process_series(series_id):
     
     next_ep_line = ""
     if status_display == "更新中":
-        max_s = max([s for s, e in existing_eps]) if existing_eps else 1
+        max_s = max([s for s, e in existing_eps]) if existing_eps else current_s
         max_e = max([e for s, e in existing_eps if s == max_s]) if existing_eps else 0
         next_ep_str = "待定"
-        found_n = False
-        nt = tmdb_info.get('next_episode_to_air') if tmdb_info else None
+        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         
-        if nt and (nt['season_number'] > max_s or (nt['season_number'] == max_s and nt['episode_number'] > max_e)):
-            next_ep_str = f"S{nt['season_number']:02d}E{nt['episode_number']:02d} ({nt['air_date'][5:]})"
-            found_n = True
-        
-        if not found_n and tmdb_id:
-            sd = get_tmdb_season_detail(tmdb_id, max_s)
-            for ep in sd.get('episodes', []) if sd else []:
-                if ep['episode_number'] > max_e and ep.get('air_date'):
-                    next_ep_str = f"S{max_s:02d}E{ep['episode_number']:02d} ({ep['air_date'][5:]})"
-                    found_n = True; break
-            if not found_n: next_ep_str = f"S{max_s:02d}E{max_e+1:02d} (待定)"
-        
+        # ================= 需求 2 落地：动态聚合计算下一个播放日的连播集数 =================
+        if sd and sd.get('episodes'):
+            # 过滤出所有在今天之后的未来未播集
+            future_eps = [ep for ep in sd['episodes'] if ep.get('air_date') and ep['air_date'] > today_str]
+            if future_eps:
+                # 抓取距离今天最近的下一个播出日期
+                next_date = min(ep['air_date'] for ep in future_eps)
+                # 揪出当天要播放的所有集数
+                next_ep_nums = sorted([ep['episode_number'] for ep in future_eps if ep['air_date'] == next_date])
+                if next_ep_nums:
+                    # 如果多集连播，聚合为 E23-E24 / E23-E28 格式，单集则保持 E23
+                    if len(next_ep_nums) > 1:
+                        ep_range_str = f"E{next_ep_nums[0]:02d}-E{next_ep_nums[-1]:02d}"
+                    else:
+                        ep_range_str = f"E{next_ep_nums[0]:02d}"
+                    next_ep_str = f"S{current_s:02d}{ep_range_str} ({next_date[5:]})"
+            else:
+                current_season_collected = len([e for s, e in existing_eps if s == current_s])
+                if current_season_total > 0 and current_season_collected >= current_season_total:
+                    next_ep_str = "本季完结 (待更新)"
+                else:
+                    next_ep_str = f"S{current_s:02d}E{max_e+1:02d} (待定)"
+        else:
+            next_ep_str = f"S{max_s:02d}E{max_e+1:02d} (待定)"
+            
         next_ep_line = f"🗓 下集：{next_ep_str}\n"
 
-    # ================= 季范围动态锁定判定 =================
+    # 季范围锁定
     missing_eps = expected_eps - existing_eps
     target_seasons = set(added_seasons)
     if not target_seasons:
-        if item.get('Type') == 'Season' and item.get('IndexNumber'):
-            target_seasons.add(item.get('IndexNumber'))
-        elif item.get('Type') == 'Episode' and item.get('ParentIndexNumber'):
-            target_seasons.add(item.get('ParentIndexNumber'))
+        if item.get('Type') == 'Season' and item.get('IndexNumber'): target_seasons.add(item.get('IndexNumber'))
+        elif item.get('Type') == 'Episode' and item.get('ParentIndexNumber'): target_seasons.add(item.get('ParentIndexNumber'))
             
-    if target_seasons:
-        missing_eps = { (s, e) for s, e in missing_eps if s in target_seasons }
-    else:
-        missing_eps = set()
+    if target_seasons: missing_eps = { (s, e) for s, e in missing_eps if s in target_seasons }
+    else: missing_eps = set()
 
     missing_line = f"⚠️ 缺集：{format_s_e(missing_eps)}\n" if missing_eps else ""
     
